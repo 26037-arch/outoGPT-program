@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+
+data/config.json
+data/browser.lock
+data/browser-profile/*
+!data/browser-profile/.gitkeep
+

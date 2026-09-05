@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cli-gpt"
+version = "0.1.0"
+description = "A minimal Playwright adapter for sending prompts to ChatGPT conversations."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "playwright>=1.40,<2",
+]
+
+[project.scripts]
+gpt = "cli_gpt.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["cli_gpt*"]
+
+[tool.unittest]
+start-directory = "tests"
+
