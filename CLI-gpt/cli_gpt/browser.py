@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import LOCK_FILE, PROFILE_DIR
-from .errors import BrowserLaunchFailed
+from .errors import BrowserLaunchFailed, InvalidExtensionPath
 
 
 LOCK_STALE_AFTER = 24 * 60 * 60
@@ -105,12 +105,48 @@ class BrowserProfileLock:
 class BrowserSession:
     """Own one headed persistent Chromium context and release it reliably."""
 
-    def __init__(self, profile_dir: Path = PROFILE_DIR, lock_path: Path = LOCK_FILE):
+    def __init__(
+        self,
+        profile_dir: Path = PROFILE_DIR,
+        lock_path: Path = LOCK_FILE,
+        extension_path: Path | None = None,
+    ):
         self.profile_dir = Path(profile_dir)
         self.lock = BrowserProfileLock(lock_path)
+        self.extension_path = (
+            self._validate_extension_path(extension_path)
+            if extension_path is not None
+            else None
+        )
         self.playwright: Any = None
         self.context: Any = None
         self.page: Any = None
+
+    @staticmethod
+    def _validate_extension_path(extension_path: Path) -> Path:
+        path = Path(extension_path).expanduser().resolve()
+        if not path.is_dir():
+            raise InvalidExtensionPath(
+                f"Extension directory does not exist: {path}"
+            )
+        if not (path / "manifest.json").is_file():
+            raise InvalidExtensionPath(
+                f"Extension directory has no manifest.json: {path}"
+            )
+        return path
+
+    def _launch_options(self) -> dict[str, Any]:
+        options: dict[str, Any] = {
+            "headless": False,
+            "viewport": {"width": 1280, "height": 900},
+        }
+        if self.extension_path is not None:
+            extension = str(self.extension_path)
+            options["args"] = [
+                f"--disable-extensions-except={extension}",
+                f"--load-extension={extension}",
+            ]
+        return options
 
     def __enter__(self):
         self.lock.acquire()
@@ -121,8 +157,7 @@ class BrowserSession:
             self.playwright = sync_playwright().start()
             self.context = self.playwright.chromium.launch_persistent_context(
                 user_data_dir=str(self.profile_dir),
-                headless=False,
-                viewport={"width": 1280, "height": 900},
+                **self._launch_options(),
             )
             self.page = self.context.pages[0] if self.context.pages else self.context.new_page()
             return self
@@ -153,4 +188,3 @@ class BrowserSession:
 
     def __exit__(self, exc_type, exc, traceback):
         self.close()
-

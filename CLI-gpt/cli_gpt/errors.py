@@ -37,6 +37,9 @@ class BrowserLaunchFailed(CliGptError):
     pass
 
 
-class PageStructureChanged(CliGptError):
+class InvalidExtensionPath(CliGptError):
     pass
 
+
+class PageStructureChanged(CliGptError):
+    pass

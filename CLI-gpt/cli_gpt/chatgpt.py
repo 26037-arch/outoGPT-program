@@ -276,6 +276,35 @@ def _wait_for_new_chat_url(page: Any, original_url: str) -> str:
     )
 
 
+def create_chat_in_page(
+    page: Any,
+    project_url: str,
+    prompt: str,
+    *,
+    progress: ProgressCallback | None = None,
+) -> str:
+    """Create a conversation using a caller-owned Playwright page."""
+    project_url = validate_project_url(project_url)
+    prompt_box = _open(page, project_url, new_chat=True, progress=progress)
+    original_url = page.url
+    _send_prompt_and_wait(page, prompt_box, prompt, progress)
+    return _wait_for_new_chat_url(page, original_url)
+
+
+def continue_chat_in_page(
+    page: Any,
+    chat_url: str,
+    prompt: str,
+    *,
+    progress: ProgressCallback | None = None,
+) -> str:
+    """Continue a conversation using a caller-owned Playwright page."""
+    chat_url = validate_chat_url(chat_url)
+    prompt_box = _open(page, chat_url, new_chat=False, progress=progress)
+    _send_prompt_and_wait(page, prompt_box, prompt, progress)
+    return page.url
+
+
 def create_chat(
     project_url: str,
     prompt: str,
@@ -285,10 +314,12 @@ def create_chat(
     """Create a conversation inside a ChatGPT project and return its final URL."""
     project_url = validate_project_url(project_url)
     with BrowserSession() as browser:
-        prompt_box = _open(browser.page, project_url, new_chat=True, progress=progress)
-        original_url = browser.page.url
-        _send_prompt_and_wait(browser.page, prompt_box, prompt, progress)
-        return _wait_for_new_chat_url(browser.page, original_url)
+        return create_chat_in_page(
+            browser.page,
+            project_url,
+            prompt,
+            progress=progress,
+        )
 
 
 def continue_chat(
@@ -300,7 +331,9 @@ def continue_chat(
     """Continue an existing ChatGPT conversation and return its URL."""
     chat_url = validate_chat_url(chat_url)
     with BrowserSession() as browser:
-        prompt_box = _open(browser.page, chat_url, new_chat=False, progress=progress)
-        _send_prompt_and_wait(browser.page, prompt_box, prompt, progress)
-        return browser.page.url
-
+        return continue_chat_in_page(
+            browser.page,
+            chat_url,
+            prompt,
+            progress=progress,
+        )

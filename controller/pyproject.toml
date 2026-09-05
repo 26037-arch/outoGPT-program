@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "outogpt-controller"
+version = "0.1.0"
+description = "Controller and machine-readable CLI for outoGPT browser automation."
+requires-python = ">=3.11"
+dependencies = ["cli-gpt>=0.1.0"]
+
+[project.scripts]
+outogpt = "outogpt_controller.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["outogpt_controller*"]
+
+[tool.unittest]
+start-directory = "tests"

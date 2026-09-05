@@ -15,6 +15,7 @@ from .errors import (
     GenerationNotStarted,
     GenerationTimeout,
     InvalidChatUrl,
+    InvalidExtensionPath,
     InvalidProjectUrl,
     LoginRequired,
     PageStructureChanged,
@@ -45,6 +46,7 @@ def friendly_error(error: CliGptError) -> str:
         InvalidProjectUrl: "Invalid project URL or configuration",
         InvalidChatUrl: "Invalid chat URL",
         LoginRequired: "Login or user interaction required",
+        InvalidExtensionPath: "Invalid extension directory",
         PromptBoxNotFound: "Prompt box not found",
         PromptSendFailed: "Prompt could not be sent",
         GenerationNotStarted: "Response generation did not start",
@@ -95,4 +97,3 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
