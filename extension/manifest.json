@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "outoGPT Chat Markdown",
+  "version": "0.1.0",
+  "description": "Archives conversations from one registered ChatGPT Project as Markdown.",
+  "permissions": ["storage"],
+  "host_permissions": ["https://chatgpt.com/*"],
+  "background": {
+    "service_worker": "background/router.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Open outoGPT setup"
+  },
+  "options_page": "setup/setup.html",
+  "content_scripts": [
+    {
+      "matches": ["https://chatgpt.com/*"],
+      "js": ["content/bootstrap.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "content/*.js",
+        "markdown/*.js",
+        "shared/*.js"
+      ],
+      "matches": ["https://chatgpt.com/*"]
+    }
+  ]
+}
+

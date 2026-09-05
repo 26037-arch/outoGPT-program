@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>outoGPT Markdown 설정</title>
+    <link rel="stylesheet" href="setup.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">outoGPT browser adapter</p>
+        <h1>ChatGPT Markdown 자동 저장</h1>
+        <p>저장할 폴더와 ChatGPT Project 하나를 등록하세요. 프로젝트 이름은 열린 ChatGPT 페이지에서 자동으로 읽습니다.</p>
+      </header>
+
+      <section>
+        <span class="step">1</span>
+        <div class="content">
+          <h2>저장 폴더</h2>
+          <p id="folder-status" class="muted">선택된 폴더가 없습니다.</p>
+          <div class="actions">
+            <button id="choose-folder" type="button">루트 폴더 선택</button>
+            <button id="reauthorize" type="button" class="secondary" hidden>폴더 권한 재승인</button>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <span class="step">2</span>
+        <div class="content">
+          <h2>ChatGPT Project</h2>
+          <label for="project-url">Project URL</label>
+          <input id="project-url" type="url" placeholder="https://chatgpt.com/g/g-p-.../project" spellcheck="false">
+          <button id="register-project" type="button">프로젝트 감지 및 등록</button>
+          <dl id="registration" hidden>
+            <div><dt>프로젝트</dt><dd id="project-name"></dd></div>
+            <div><dt>Project ID</dt><dd id="project-id"></dd></div>
+            <div><dt>저장 위치</dt><dd id="project-path"></dd></div>
+          </dl>
+        </div>
+      </section>
+
+      <section class="status-section">
+        <span class="step">3</span>
+        <div class="content">
+          <h2>상태</h2>
+          <output id="status" role="status">설정을 기다리는 중입니다.</output>
+          <pre id="debug-status"></pre>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="setup.js"></script>
+  </body>
+</html>
+
