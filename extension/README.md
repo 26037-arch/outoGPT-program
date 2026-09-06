@@ -1,5 +1,10 @@
 # outoGPT Chat Markdown Extension
 
+> In the normal OutoGPT path, do not load this extension into a personal Chrome
+> profile. Initial manual authentication runs without any extension. After that
+> browser closes, OutoGPT restarts Playwright Chromium with the same dedicated
+> profile, loads this extension, and verifies its Manifest V3 service worker.
+
 ## 목적과 현재 범위
 
 Manifest V3 Chrome Extension으로, 등록한 ChatGPT Project 한 개의 conversation을 사용자가 선택한 폴더에 Markdown으로 자동 보관합니다. 이 확장은 `outoGPT-program`의 브라우저 어댑터 계층이며, 프롬프트 입력·workflow graph·LLM 판단·스케줄링은 구현하지 않습니다.

@@ -1,4 +1,4 @@
-"""ChatGPT-specific DOM selectors, kept out of browser orchestration code."""
+"""Resilient, accessibility-first ChatGPT UI locators."""
 
 from __future__ import annotations
 
@@ -8,12 +8,19 @@ from typing import Any
 
 from .errors import PromptBoxNotFound
 
-
-PROMPT_NAME = re.compile(r"message|prompt|chatgpt|메시지|프롬프트", re.IGNORECASE)
+PROMPT_NAME = re.compile(r"message|prompt|ask|chatgpt|메시지|프롬프트|질문", re.IGNORECASE)
 SEND_NAME = re.compile(r"send(?: prompt| message)?|보내기|전송", re.IGNORECASE)
 STOP_NAME = re.compile(r"stop (?:generating|streaming)|생성 중지|응답 중지", re.IGNORECASE)
-NEW_CHAT_NAME = re.compile(r"new chat(?: in .+)?|새 채팅", re.IGNORECASE)
+NEW_CHAT_NAME = re.compile(r"new chat(?: in .+)?|새 채팅|새 대화", re.IGNORECASE)
 LOGIN_NAME = re.compile(r"log ?in|sign ?in|로그인", re.IGNORECASE)
+ACCOUNT_NAME = re.compile(
+    r"account|profile|user menu|settings|workspace|계정|프로필|사용자 메뉴|설정",
+    re.IGNORECASE,
+)
+ACCESS_ERROR_NAME = re.compile(
+    r"not found|no access|do not have access|permission|찾을 수 없|접근.*없|권한",
+    re.IGNORECASE,
+)
 
 
 def _each_match(locator: Any) -> Iterable[Any]:
@@ -48,7 +55,15 @@ def _first_usable(candidates: Iterable[Any], *, editable: bool = False):
 def prompt_box_candidates(page: Any) -> list[Any]:
     return [
         page.get_by_role("textbox", name=PROMPT_NAME),
-        page.locator('[aria-label="Prompt"], [aria-label="Message ChatGPT"], [aria-label="메시지"]'),
+        page.locator(
+            'textarea[placeholder*="message" i], '
+            'textarea[placeholder*="prompt" i], '
+            '[contenteditable="true"][data-placeholder]'
+        ),
+        page.locator(
+            '[aria-label="Prompt"], [aria-label="Message ChatGPT"], '
+            '[aria-label="메시지"], [aria-label="프롬프트"]'
+        ),
         page.locator("#prompt-textarea"),
         page.locator('[data-testid="prompt-textarea"]'),
         page.locator('div[contenteditable="true"][role="textbox"]'),
@@ -61,7 +76,8 @@ def find_prompt_box(page: Any):
     locator = _first_usable(prompt_box_candidates(page), editable=True)
     if locator is None:
         raise PromptBoxNotFound(
-            "Could not find an enabled ChatGPT prompt box. The page may require login or its UI may have changed."
+            "Could not find an enabled ChatGPT prompt box. "
+            "The page may require login or its UI may have changed."
         )
     return locator
 
@@ -71,7 +87,10 @@ def find_send_button(page: Any):
         [
             page.get_by_role("button", name=SEND_NAME),
             page.locator('[data-testid="send-button"]'),
-            page.locator('button[aria-label*="Send" i], button[aria-label*="보내기"]'),
+            page.locator(
+                'button[aria-label*="Send" i], '
+                'button[aria-label*="보내기"], button[aria-label*="전송"]'
+            ),
         ]
     )
 
@@ -81,7 +100,9 @@ def find_stop_button(page: Any):
         [
             page.get_by_role("button", name=STOP_NAME),
             page.locator('[data-testid="stop-button"]'),
-            page.locator('button[aria-label*="Stop" i], button[aria-label*="중지"]'),
+            page.locator(
+                'button[aria-label*="Stop" i], button[aria-label*="중지"]'
+            ),
         ]
     )
 
@@ -96,6 +117,25 @@ def find_new_chat_control(page: Any):
     )
 
 
+def find_login_control(page: Any):
+    return _first_usable(
+        [
+            page.get_by_role("button", name=LOGIN_NAME),
+            page.get_by_role("link", name=LOGIN_NAME),
+        ]
+    )
+
+
+def find_account_control(page: Any):
+    return _first_usable(
+        [
+            page.get_by_role("button", name=ACCOUNT_NAME),
+            page.get_by_role("link", name=ACCOUNT_NAME),
+            page.locator('[data-testid*="profile" i], [data-testid*="account" i]'),
+        ]
+    )
+
+
 def login_or_challenge_visible(page: Any) -> bool:
     candidates = [
         page.get_by_role("button", name=LOGIN_NAME),
@@ -104,6 +144,16 @@ def login_or_challenge_visible(page: Any) -> bool:
         page.locator('[id*="captcha" i], [class*="captcha" i]'),
     ]
     return _first_usable(candidates) is not None
+
+
+def project_access_error_visible(page: Any) -> bool:
+    return _first_usable(
+        [
+            page.get_by_role("heading", name=ACCESS_ERROR_NAME),
+            page.get_by_role("alert", name=ACCESS_ERROR_NAME),
+            page.get_by_text(ACCESS_ERROR_NAME),
+        ]
+    ) is not None
 
 
 def assistant_response_count(page: Any) -> int:
@@ -129,4 +179,3 @@ def latest_assistant_fingerprint(page: Any) -> str:
         return f"{count}:{len(text)}:{text[-80:]}"
     except Exception:
         return ""
-

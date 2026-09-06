@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 from .browser import BrowserSession
 from .config import validate_chat_url, validate_project_url
@@ -13,6 +14,7 @@ from .errors import (
     GenerationNotStarted,
     GenerationTimeout,
     LoginRequired,
+    ProjectAccessFailed,
     PageStructureChanged,
     PromptBoxNotFound,
     PromptSendFailed,
@@ -20,11 +22,14 @@ from .errors import (
 from .selectors import (
     assistant_response_count,
     find_new_chat_control,
+    find_account_control,
+    find_login_control,
     find_prompt_box,
     find_send_button,
     find_stop_button,
     latest_assistant_fingerprint,
     login_or_challenge_visible,
+    project_access_error_visible,
 )
 
 
@@ -37,6 +42,73 @@ CHAT_URL_TIMEOUT = 30
 POLL_INTERVAL = 0.5
 
 ProgressCallback = Callable[[str], None]
+
+
+def _authentication_url(url: str) -> bool:
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return True
+    host = (parts.hostname or "").lower()
+    path = parts.path.lower()
+    return host in {"auth.openai.com", "login.openai.com"} or "/auth/" in path
+
+
+def verify_chatgpt_login(page: Any) -> bool:
+    """Use independent URL, account/UI, and composer signals to verify login."""
+    if _authentication_url(getattr(page, "url", "")):
+        return False
+    if login_or_challenge_visible(page) or find_login_control(page) is not None:
+        return False
+    try:
+        composer_ready = find_prompt_box(page) is not None
+    except PromptBoxNotFound:
+        composer_ready = False
+    account_ready = find_account_control(page) is not None
+    app_navigation_ready = find_new_chat_control(page) is not None
+    # A usable composer plus the absence of all authentication signals is the
+    # strongest stable cross-layout signal. Account/new-chat controls add an
+    # independent positive signal when the current responsive layout exposes one.
+    return composer_ready and (
+        account_ready or app_navigation_ready or "chatgpt.com" in getattr(page, "url", "")
+    )
+
+
+def _project_marker(url: str) -> str:
+    try:
+        parts = [part for part in urlsplit(url).path.split("/") if part]
+    except ValueError:
+        return ""
+    return next((part for part in parts if part.startswith("g-p-")), "")
+
+
+def _normalized_path(url: str) -> str:
+    try:
+        return urlsplit(url).path.rstrip("/")
+    except ValueError:
+        return ""
+
+
+def verify_project_access(page: Any, project_url: str) -> bool:
+    """Navigate to the configured project and prove that its composer is usable."""
+    project_url = validate_project_url(project_url)
+    try:
+        page.goto(project_url, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT * 1000)
+    except Exception as exc:
+        raise ProjectAccessFailed(f"Could not open the configured ChatGPT project: {exc}") from exc
+    if not verify_chatgpt_login(page) or project_access_error_visible(page):
+        return False
+    expected_marker = _project_marker(project_url)
+    if expected_marker and expected_marker not in getattr(page, "url", ""):
+        return False
+    if not expected_marker and _normalized_path(project_url) != _normalized_path(
+        getattr(page, "url", "")
+    ):
+        return False
+    try:
+        return find_prompt_box(page) is not None
+    except PromptBoxNotFound:
+        return False
 
 
 class GenerationState(Enum):

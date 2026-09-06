@@ -7,6 +7,8 @@ from collections.abc import Callable
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
+from cli_gpt.errors import CliGptError
+
 from .adapters.archive import ArchiveAdapter, PassiveExtensionArchiveAdapter
 from .adapters.browser import BrowserAdapter
 from .errors import ControllerError, InvalidChatUrlError, UnknownChatError
@@ -51,6 +53,8 @@ def extract_chat_id(chat_url: str) -> str:
 def _error_details(error: Exception) -> tuple[str, str]:
     if isinstance(error, ControllerError):
         return error.code, str(error)
+    if isinstance(error, CliGptError):
+        return error.code, str(error)
     return ERROR_CODES.get(type(error).__name__, "CONTROLLER_INTERNAL_ERROR"), str(error)
 
 
@@ -59,14 +63,77 @@ class OutogptController:
         self,
         registry: Registry | None = None,
         *,
-        browser_factory: Callable[[], Any] = BrowserAdapter,
+        browser_factory: Callable[[], Any] | None = None,
         archive_adapter: ArchiveAdapter | None = None,
         archive_timeout: float | None = None,
     ):
         self.registry = registry or Registry()
-        self.browser_factory = browser_factory
+        self.browser_factory = browser_factory or BrowserAdapter
+        # The production controller owns one BrowserAdapter for its whole life.
+        # An explicitly injected factory retains the old one-operation contract,
+        # which keeps third-party/test adapters backward compatible.
+        self._persistent_browser = browser_factory is None
+        self._browser_instance: Any = None
         self.archive_adapter = archive_adapter or PassiveExtensionArchiveAdapter()
         self.archive_timeout = archive_timeout
+
+    def _acquire_browser(self) -> Any:
+        if self._persistent_browser:
+            if self._browser_instance is None:
+                self._browser_instance = self.browser_factory()
+                try:
+                    self._browser_instance.open()
+                except Exception:
+                    try:
+                        self._browser_instance.close()
+                    finally:
+                        self._browser_instance = None
+                    raise
+            return self._browser_instance
+        browser = self.browser_factory()
+        try:
+            browser.open()
+        except Exception:
+            browser.close()
+            raise
+        return browser
+
+    def _release_browser(self, browser: Any) -> None:
+        if not self._persistent_browser:
+            browser.close()
+
+    def setup(
+        self,
+        project_url: str,
+        *,
+        input_func=input,
+        output=print,
+    ) -> None:
+        if self._persistent_browser:
+            if self._browser_instance is None:
+                self._browser_instance = self.browser_factory()
+            browser = self._browser_instance
+        else:
+            browser = self.browser_factory()
+        if hasattr(browser, "setup"):
+            try:
+                browser.setup(project_url, input_func=input_func, output=output)
+                return
+            finally:
+                if not self._persistent_browser:
+                    browser.close()
+        raise ControllerError("The configured browser adapter does not support setup.")
+
+    def close(self) -> None:
+        browser, self._browser_instance = self._browser_instance, None
+        if browser is not None:
+            browser.close()
+
+    def __enter__(self) -> "OutogptController":
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        self.close()
 
     def _transition_callback(self, operation_id: str):
         waiting_recorded = False
@@ -110,8 +177,9 @@ class OutogptController:
         archive: ArchiveResult | None = None
         try:
             self.registry.transition(operation_id, OperationState.BROWSER_STARTING)
-            browser = self.browser_factory()
-            browser.open()
+            browser = self._acquire_browser()
+            if hasattr(browser, "prepare"):
+                browser.prepare(project_url)
             self.registry.transition(operation_id, OperationState.PROMPT_SENDING)
             chat_url = browser.create_chat(
                 project_url,
@@ -128,7 +196,7 @@ class OutogptController:
             archive = self.archive_adapter.wait_until_saved(
                 chat_id, timeout=self.archive_timeout
             )
-            browser.close()
+            self._release_browser(browser)
             browser = None
             self.registry.complete_operation(operation_id)
             return ControllerResult(
@@ -151,7 +219,7 @@ class OutogptController:
         finally:
             if browser is not None:
                 try:
-                    browser.close()
+                    self._release_browser(browser)
                 except Exception:
                     pass
 
@@ -167,14 +235,24 @@ class OutogptController:
                 raise UnknownChatError(f"Unknown chat_id: {chat_id}")
             chat_url = chat.chat_url
             self.registry.transition(operation_id, OperationState.BROWSER_STARTING)
-            browser = self.browser_factory()
-            browser.open()
+            browser = self._acquire_browser()
+            if hasattr(browser, "prepare"):
+                browser.prepare(chat.project_url)
             self.registry.transition(operation_id, OperationState.PROMPT_SENDING)
-            resulting_url = browser.send_prompt(
-                chat_url,
-                prompt,
-                progress=self._transition_callback(operation_id),
-            )
+            if self._persistent_browser:
+                resulting_url = browser.send_prompt(
+                    chat_url,
+                    prompt,
+                    chat_id=chat_id,
+                    project_url=chat.project_url,
+                    progress=self._transition_callback(operation_id),
+                )
+            else:
+                resulting_url = browser.send_prompt(
+                    chat_url,
+                    prompt,
+                    progress=self._transition_callback(operation_id),
+                )
             self.registry.transition(operation_id, OperationState.RESPONSE_COMPLETED)
             resulting_id = extract_chat_id(resulting_url)
             if resulting_id != chat_id:
@@ -189,7 +267,7 @@ class OutogptController:
             archive = self.archive_adapter.wait_until_saved(
                 chat_id, timeout=self.archive_timeout
             )
-            browser.close()
+            self._release_browser(browser)
             browser = None
             self.registry.complete_operation(operation_id)
             return ControllerResult(
@@ -212,7 +290,7 @@ class OutogptController:
         finally:
             if browser is not None:
                 try:
-                    browser.close()
+                    self._release_browser(browser)
                 except Exception:
                     pass
 

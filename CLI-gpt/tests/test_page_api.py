@@ -9,6 +9,8 @@ from cli_gpt.chatgpt import (
     continue_chat_in_page,
     create_chat,
     create_chat_in_page,
+    verify_chatgpt_login,
+    verify_project_access,
 )
 from cli_gpt.errors import InvalidExtensionPath
 
@@ -112,6 +114,36 @@ class BrowserExtensionTests(unittest.TestCase):
             empty.mkdir()
             with self.assertRaisesRegex(InvalidExtensionPath, "manifest.json"):
                 BrowserSession(extension_path=empty)
+
+
+class VerificationTests(unittest.TestCase):
+    def test_login_verification_combines_url_auth_controls_and_composer(self):
+        page = MagicMock()
+        page.url = "https://chatgpt.com/"
+        with (
+            patch("cli_gpt.chatgpt.login_or_challenge_visible", return_value=False),
+            patch("cli_gpt.chatgpt.find_login_control", return_value=None),
+            patch("cli_gpt.chatgpt.find_prompt_box", return_value=object()),
+            patch("cli_gpt.chatgpt.find_account_control", return_value=object()),
+            patch("cli_gpt.chatgpt.find_new_chat_control", return_value=None),
+        ):
+            self.assertTrue(verify_chatgpt_login(page))
+
+        page.url = "https://auth.openai.com/log-in"
+        self.assertFalse(verify_chatgpt_login(page))
+
+    def test_project_verification_rejects_redirect_away_from_project(self):
+        page = MagicMock()
+        project_url = "https://chatgpt.com/g/g-p-project/example/project"
+        page.url = project_url
+        with (
+            patch("cli_gpt.chatgpt.verify_chatgpt_login", return_value=True),
+            patch("cli_gpt.chatgpt.project_access_error_visible", return_value=False),
+            patch("cli_gpt.chatgpt.find_prompt_box", return_value=object()),
+        ):
+            self.assertTrue(verify_project_access(page, project_url))
+            page.url = "https://chatgpt.com/"
+            self.assertFalse(verify_project_access(page, project_url))
 
 
 if __name__ == "__main__":

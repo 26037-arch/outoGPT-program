@@ -11,10 +11,14 @@ from .errors import InvalidChatUrl, InvalidProjectUrl
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = PROJECT_ROOT / "data"
+# Browser state is user state, not repository state.  Keeping this path stable is
+# what lets a later OutoGPT process reuse the authenticated Chromium profile.
+DATA_DIR = Path(
+    os.environ.get("OUTOGPT_DATA_DIR", Path.home() / ".outogpt")
+).expanduser()
 CONFIG_FILE = DATA_DIR / "config.json"
-PROFILE_DIR = DATA_DIR / "browser-profile"
-LOCK_FILE = DATA_DIR / "browser.lock"
+PROFILE_DIR = DATA_DIR / "chromium-profile"
+LOCK_FILE = DATA_DIR / "chromium-profile.lock"
 
 
 def _validated_chatgpt_parts(url: str, error_type: type[Exception]):
@@ -76,4 +80,3 @@ def load_project_url(path: Path = CONFIG_FILE) -> str:
     except (json.JSONDecodeError, KeyError, TypeError) as exc:
         raise InvalidProjectUrl("The local configuration file is invalid. Run gpt setup again.") from exc
     return validate_project_url(url)
-

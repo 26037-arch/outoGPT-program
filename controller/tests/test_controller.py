@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from cli_gpt.errors import BrowserLaunchFailed, PromptSendFailed
 from outogpt_controller.adapters.archive import PassiveExtensionArchiveAdapter
@@ -50,7 +51,9 @@ class FakeBrowser:
         progress("prompt_sent")
         return "https://chatgpt.com/c/new-chat"
 
-    def send_prompt(self, chat_url, prompt, *, progress=None):
+    def send_prompt(
+        self, chat_url, prompt, *, chat_id=None, project_url="", progress=None
+    ):
         if self.error_at == "prompt":
             raise PromptSendFailed("send failed")
         progress("waiting")
@@ -169,6 +172,27 @@ class ControllerTests(unittest.TestCase):
         status = self.controller(FakeBrowser()).get_status(result.chat_id)
         self.assertEqual(status.chat.chat_id, result.chat_id)
         self.assertEqual(status.operation.operation_id, result.operation_id)
+
+    def test_production_browser_is_reused_until_controller_close(self):
+        browser = FakeBrowser()
+        with patch(
+            "outogpt_controller.controller.BrowserAdapter", return_value=browser
+        ):
+            controller = OutogptController(
+                self.registry,
+                archive_adapter=self.archive,
+                archive_timeout=4.0,
+            )
+            created = controller.create_chat(
+                "https://chatgpt.com/g/project", "first"
+            )
+            sent = controller.send_prompt(created.chat_id, "next")
+
+            self.assertTrue(created.ok)
+            self.assertTrue(sent.ok)
+            self.assertFalse(browser.closed)
+            controller.close()
+            self.assertTrue(browser.closed)
 
     def test_passive_archive_never_claims_saved(self):
         sleeps = []

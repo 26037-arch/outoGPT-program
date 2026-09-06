@@ -10,6 +10,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from cli_gpt.config import load_project_url, save_project_url
+
 from .controller import OutogptController, _error_details
 from .errors import InvalidArgumentError
 from .paths import DEFAULT_DATABASE_PATH
@@ -36,11 +38,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--database", type=Path, default=DEFAULT_DATABASE_PATH)
     groups = parser.add_subparsers(dest="group", required=True)
+
+    setup = groups.add_parser(
+        "setup", help="Start OutoGPT Chromium and verify login/project access."
+    )
+    setup.add_argument("--project-url", required=True)
+
     chat = groups.add_parser("chat")
     commands = chat.add_subparsers(dest="command", required=True)
 
     create = commands.add_parser("create")
-    create.add_argument("--project-url", required=True)
+    create.add_argument(
+        "--project-url",
+        help="ChatGPT project URL (defaults to the URL verified by setup).",
+    )
     _add_prompt_options(create)
     _add_output_option(create)
 
@@ -89,12 +100,19 @@ def main(
 ) -> int:
     raw_argv = list(argv) if argv is not None else sys.argv[1:]
     args = None
+    controller = None
     json_requested = "--json" in raw_argv
     try:
         args = build_parser().parse_args(raw_argv)
         controller = controller_factory(registry=Registry(args.database))
+        if args.group == "setup":
+            controller.setup(args.project_url)
+            save_project_url(args.project_url)
+            print("[setup] OutoGPT setup completed.")
+            return 0
         if args.command == "create":
-            payload = controller.create_chat(args.project_url, _prompt(args)).to_dict()
+            project_url = args.project_url or load_project_url()
+            payload = controller.create_chat(project_url, _prompt(args)).to_dict()
         elif args.command == "send":
             payload = controller.send_prompt(args.chat_id, _prompt(args)).to_dict()
         else:
@@ -114,6 +132,11 @@ def main(
         }
         _write(payload, getattr(args, "json", json_requested) if args is not None else json_requested)
         return 1
+    finally:
+        if controller is not None:
+            close = getattr(controller, "close", None)
+            if close is not None:
+                close()
 
 
 if __name__ == "__main__":

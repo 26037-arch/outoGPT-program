@@ -11,7 +11,7 @@ from cli_gpt.errors import InvalidExtensionPath
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 EXTENSION_DIR = REPOSITORY_ROOT / "extension"
 DEFAULT_DATA_DIR = Path(
-    os.environ.get("OUTOGPT_DATA_DIR", REPOSITORY_ROOT / "controller" / "data")
+    os.environ.get("OUTOGPT_DATA_DIR", Path.home() / ".outogpt")
 ).expanduser()
 DEFAULT_DATABASE_PATH = DEFAULT_DATA_DIR / "registry.sqlite3"
 
