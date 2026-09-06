@@ -1,0 +1,2 @@
+[console_scripts]
+outogpt = outogpt_controller.cli:main

@@ -10,7 +10,7 @@ from cli_gpt.browser import (
     ChromeLauncher,
     ChromeProcess,
 )
-from cli_gpt.errors import ChromeNotFound, LoginNotReady
+from cli_gpt.errors import ChromeDebugPortUnavailable, ChromeNotFound, LoginNotReady
 from cli_gpt.setup import interactive_setup
 
 
@@ -42,6 +42,15 @@ class ChromeExecutableResolverTests(unittest.TestCase):
 
 
 class ChromeLauncherTests(unittest.TestCase):
+    def make_launcher(self, root, *, popen=None):
+        return ChromeLauncher(
+            root / "chrome.exe",
+            root / "profile",
+            state_path=root / "state.json",
+            lock=MagicMock(),
+            popen=popen or MagicMock(),
+        )
+
     def test_command_uses_local_cdp_and_dedicated_profile_only(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -121,11 +130,131 @@ class ChromeLauncherTests(unittest.TestCase):
             with (
                 patch("cli_gpt.browser._process_is_alive", return_value=True),
                 patch.object(launcher, "cdp_available", return_value=True),
+                patch.object(launcher, "_find_listener_pid", return_value=1234),
+                patch.object(
+                    launcher, "_process_matches_dedicated_chrome", return_value=True
+                ),
             ):
                 chrome = launcher.launch_or_attach()
             self.assertFalse(chrome.owned)
             self.assertEqual(chrome.pid, 1234)
             popen.assert_not_called()
+
+    def test_unrecorded_matching_chrome_is_recovered_and_attached(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            popen = MagicMock()
+            launcher = self.make_launcher(root, popen=popen)
+            with (
+                patch.object(launcher, "cdp_available", return_value=True),
+                patch.object(launcher, "_find_listener_pid", return_value=13516),
+                patch.object(
+                    launcher, "_process_matches_dedicated_chrome", return_value=True
+                ),
+            ):
+                chrome = launcher.launch_or_attach()
+
+            self.assertEqual(chrome.pid, 13516)
+            self.assertFalse(chrome.owned)
+            self.assertIsNone(chrome.handle)
+            popen.assert_not_called()
+            state = json.loads((root / "state.json").read_text(encoding="utf-8"))
+            self.assertEqual(state["pid"], 13516)
+            self.assertEqual(state["port"], 9222)
+            self.assertEqual(state["profile_dir"], str((root / "profile").resolve()))
+            self.assertEqual(state["executable"], str((root / "chrome.exe").resolve()))
+
+    def test_unrecorded_chrome_with_wrong_profile_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            launcher = self.make_launcher(root)
+            process = MagicMock()
+            process.exe.return_value = str((root / "chrome.exe").resolve())
+            process.cmdline.return_value = [
+                str((root / "chrome.exe").resolve()),
+                "--remote-debugging-address=127.0.0.1",
+                "--remote-debugging-port=9222",
+                f"--user-data-dir={(root / 'other-profile').resolve()}",
+            ]
+            with (
+                patch.object(launcher, "cdp_available", return_value=True),
+                patch.object(launcher, "_find_listener_pid", return_value=13516),
+                patch("cli_gpt.browser.psutil.Process", return_value=process),
+                self.assertRaises(ChromeDebugPortUnavailable),
+            ):
+                launcher.launch_or_attach()
+            launcher.popen.assert_not_called()
+
+    def test_unrecorded_chrome_with_wrong_executable_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            launcher = self.make_launcher(root)
+            process = MagicMock()
+            process.exe.return_value = str((root / "other-chrome.exe").resolve())
+            process.cmdline.return_value = launcher.command()
+            with (
+                patch.object(launcher, "cdp_available", return_value=True),
+                patch.object(launcher, "_find_listener_pid", return_value=13516),
+                patch("cli_gpt.browser.psutil.Process", return_value=process),
+                self.assertRaises(ChromeDebugPortUnavailable),
+            ):
+                launcher.launch_or_attach()
+            launcher.popen.assert_not_called()
+
+    def test_non_chrome_listener_without_cdp_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            launcher = self.make_launcher(Path(directory))
+            with (
+                patch.object(launcher, "cdp_available", return_value=False),
+                patch.object(launcher, "port_in_use", return_value=True),
+                self.assertRaises(ChromeDebugPortUnavailable),
+            ):
+                launcher.launch_or_attach()
+            launcher.popen.assert_not_called()
+
+    def test_matching_process_accepts_split_option_form(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            launcher = self.make_launcher(root)
+            process = MagicMock()
+            process.exe.return_value = str((root / "chrome.exe").resolve())
+            process.cmdline.return_value = [
+                str((root / "chrome.exe").resolve()),
+                "--remote-debugging-address",
+                "127.0.0.1",
+                "--remote-debugging-port",
+                "9222",
+                "--user-data-dir",
+                str((root / "profile").resolve()),
+            ]
+            with patch("cli_gpt.browser.psutil.Process", return_value=process):
+                self.assertTrue(launcher._process_matches_dedicated_chrome(13516))
+
+    def test_recovery_is_rechecked_after_launch_lock_is_acquired(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            lock = MagicMock()
+            launcher = ChromeLauncher(
+                root / "chrome.exe",
+                root / "profile",
+                state_path=root / "state.json",
+                lock=lock,
+                popen=MagicMock(),
+            )
+            recovered = ChromeProcess(launcher.endpoint, 13516, owned=False)
+            with (
+                patch.object(launcher, "cdp_available", side_effect=[False, True]),
+                patch.object(launcher, "port_in_use", return_value=False),
+                patch.object(
+                    launcher, "_recover_dedicated_chrome", return_value=recovered
+                ) as recover,
+            ):
+                chrome = launcher.launch_or_attach()
+            self.assertIs(chrome, recovered)
+            recover.assert_called_once()
+            launcher.popen.assert_not_called()
+            lock.acquire.assert_called_once()
+            lock.release.assert_called_once()
 
 
 class BrowserSessionTests(unittest.TestCase):

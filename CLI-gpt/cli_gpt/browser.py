@@ -16,6 +16,8 @@ from urllib.error import URLError
 from urllib.parse import urlsplit
 from urllib.request import urlopen
 
+import psutil
+
 from .config import (
     BROWSER_SETUP_FILE,
     CHROME_SESSION_FILE,
@@ -39,6 +41,36 @@ from .errors import (
 LOCK_STALE_AFTER = 24 * 60 * 60
 CHROME_START_TIMEOUT = 20.0
 CDP_POLL_INTERVAL = 0.1
+
+
+def _same_path(first: Path | str, second: Path | str) -> bool:
+    """Compare paths without leaking Windows spelling differences into trust checks."""
+
+    def unquoted(value: Path | str) -> str:
+        raw = os.fspath(value)
+        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {'"', "'"}:
+            return raw[1:-1]
+        return raw
+
+    try:
+        first_path = os.path.abspath(os.path.realpath(unquoted(first)))
+        second_path = os.path.abspath(os.path.realpath(unquoted(second)))
+    except (OSError, TypeError, ValueError):
+        return False
+    return os.path.normcase(first_path) == os.path.normcase(second_path)
+
+
+def _command_line_option(arguments: list[str], name: str) -> str | None:
+    """Read one Chrome option in either ``--name=value`` or ``--name value`` form."""
+
+    prefix = f"{name}="
+    values: list[str] = []
+    for index, argument in enumerate(arguments):
+        if argument.startswith(prefix):
+            values.append(argument[len(prefix) :])
+        elif argument == name and index + 1 < len(arguments):
+            values.append(arguments[index + 1])
+    return values[0] if len(values) == 1 else None
 
 
 def _process_is_alive(pid: int) -> bool:
@@ -280,23 +312,29 @@ class ChromeLauncher:
         try:
             return (
                 int(state["port"]) == self.port
-                and Path(state["profile_dir"]).resolve() == self.profile_dir
-                and Path(state["executable"]).resolve() == self.executable
+                and _same_path(state["profile_dir"], self.profile_dir)
+                and _same_path(state["executable"], self.executable)
             )
         except (KeyError, TypeError, ValueError, OSError):
             return False
 
-    def _write_state(self, process: Any) -> None:
+    def _write_state_for_pid(self, pid: int) -> None:
+        try:
+            started_at = psutil.Process(pid).create_time()
+        except (psutil.Error, OSError, ValueError):
+            # For a just-launched process this is only descriptive metadata. The
+            # live process, command line, listener, and CDP endpoint are trusted.
+            started_at = time.time()
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.state_path.with_suffix(self.state_path.suffix + ".tmp")
         temporary.write_text(
             json.dumps(
                 {
-                    "pid": int(process.pid),
+                    "pid": int(pid),
                     "port": self.port,
                     "profile_dir": str(self.profile_dir),
                     "executable": str(self.executable),
-                    "started_at": time.time(),
+                    "started_at": started_at,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -305,6 +343,71 @@ class ChromeLauncher:
             encoding="utf-8",
         )
         os.replace(temporary, self.state_path)
+
+    def _write_state(self, process: Any) -> None:
+        self._write_state_for_pid(int(process.pid))
+
+    def _find_listener_pid(self) -> int | None:
+        """Return the PID listening on this launcher's exact local CDP endpoint."""
+
+        try:
+            connections = psutil.net_connections(kind="tcp")
+        except (psutil.Error, OSError):
+            return None
+
+        listener_pids: set[int] = set()
+        for connection in connections:
+            if connection.status != psutil.CONN_LISTEN or connection.pid is None:
+                continue
+            address = connection.laddr
+            try:
+                address_host = address.ip
+                address_port = address.port
+            except AttributeError:
+                try:
+                    address_host, address_port = address[0], address[1]
+                except (IndexError, TypeError, ValueError):
+                    continue
+            if str(address_host) == self.host and int(address_port) == self.port:
+                listener_pids.add(int(connection.pid))
+
+        if len(listener_pids) != 1:
+            return None
+        return listener_pids.pop()
+
+    def _process_matches_dedicated_chrome(self, pid: int) -> bool:
+        """Verify the listener is precisely the configured OutoGPT Chrome."""
+
+        try:
+            process = psutil.Process(pid)
+            executable = process.exe()
+            command_line = [str(argument) for argument in process.cmdline()]
+        except (psutil.Error, OSError, TypeError, ValueError):
+            return False
+
+        if not _same_path(executable, self.executable):
+            return False
+
+        address = _command_line_option(command_line, "--remote-debugging-address")
+        port = _command_line_option(command_line, "--remote-debugging-port")
+        profile = _command_line_option(command_line, "--user-data-dir")
+        return (
+            address == self.host
+            and port == str(self.port)
+            and profile is not None
+            and _same_path(profile, self.profile_dir)
+        )
+
+    def _recover_dedicated_chrome(self) -> ChromeProcess | None:
+        """Recover an unrecorded Chrome only after live identity verification."""
+
+        if not self.cdp_available():
+            return None
+        pid = self._find_listener_pid()
+        if pid is None or not self._process_matches_dedicated_chrome(pid):
+            return None
+        self._write_state_for_pid(pid)
+        return ChromeProcess(self.endpoint, pid, handle=None, owned=False)
 
     def _remove_own_state(self, pid: int | None) -> None:
         state = self._read_state()
@@ -326,6 +429,9 @@ class ChromeLauncher:
         if not _process_is_alive(pid):
             self._remove_own_state(pid)
             return None
+        listener_pid = self._find_listener_pid()
+        if listener_pid != pid or not self._process_matches_dedicated_chrome(pid):
+            return None
         if self.cdp_available():
             return ChromeProcess(self.endpoint, pid, owned=False)
         raise ChromeCdpConnectionFailed(
@@ -336,9 +442,17 @@ class ChromeLauncher:
         existing = self._existing_managed_process()
         if existing is not None:
             return existing
-        if self.cdp_available() or self.port_in_use():
+        if self.cdp_available():
+            recovered = self._recover_dedicated_chrome()
+            if recovered is not None:
+                return recovered
             raise ChromeDebugPortUnavailable(
-                f"Local port {self.port} is already in use by an unmanaged process."
+                f"Local port {self.port} is occupied by a Chrome instance that does "
+                "not match the dedicated OutoGPT Chrome configuration."
+            )
+        if self.port_in_use():
+            raise ChromeDebugPortUnavailable(
+                f"Local port {self.port} is already in use by another process."
             )
 
         self.lock.acquire()
@@ -347,7 +461,15 @@ class ChromeLauncher:
             existing = self._existing_managed_process()
             if existing is not None:
                 return existing
-            if self.cdp_available() or self.port_in_use():
+            if self.cdp_available():
+                recovered = self._recover_dedicated_chrome()
+                if recovered is not None:
+                    return recovered
+                raise ChromeDebugPortUnavailable(
+                    f"Local port {self.port} became occupied by a Chrome instance that "
+                    "does not match the dedicated OutoGPT Chrome configuration."
+                )
+            if self.port_in_use():
                 raise ChromeDebugPortUnavailable(
                     f"Local port {self.port} became unavailable while starting Chrome."
                 )
