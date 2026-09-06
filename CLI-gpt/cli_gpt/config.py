@@ -11,10 +11,16 @@ from .errors import InvalidChatUrl, InvalidProjectUrl
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+REPOSITORY_ROOT = PROJECT_ROOT.parent
 DATA_DIR = PROJECT_ROOT / "data"
 CONFIG_FILE = DATA_DIR / "config.json"
 PROFILE_DIR = DATA_DIR / "browser-profile"
 LOCK_FILE = DATA_DIR / "browser.lock"
+CHROME_SESSION_FILE = DATA_DIR / "chrome-session.json"
+BROWSER_SETUP_FILE = DATA_DIR / "browser-setup.json"
+DEFAULT_CDP_HOST = "127.0.0.1"
+DEFAULT_CDP_PORT = 9222
+DEFAULT_EXTENSION_DIR = REPOSITORY_ROOT / "extension"
 
 
 def _validated_chatgpt_parts(url: str, error_type: type[Exception]):
@@ -40,7 +46,9 @@ def validate_project_url(url: str) -> str:
     parts = _validated_chatgpt_parts(url, InvalidProjectUrl)
     path_parts = [part for part in parts.path.split("/") if part]
     if not path_parts or "c" in path_parts:
-        raise InvalidProjectUrl("Expected a ChatGPT Project URL, not a conversation URL.")
+        raise InvalidProjectUrl(
+            "Expected a ChatGPT Project URL, not a conversation URL."
+        )
     return url.strip()
 
 
@@ -50,9 +58,13 @@ def validate_chat_url(url: str) -> str:
     try:
         conversation_index = path_parts.index("c")
     except ValueError as exc:
-        raise InvalidChatUrl("Expected a ChatGPT conversation URL containing /c/<id>.") from exc
+        raise InvalidChatUrl(
+            "Expected a ChatGPT conversation URL containing /c/<id>."
+        ) from exc
     if conversation_index + 1 >= len(path_parts):
-        raise InvalidChatUrl("The ChatGPT conversation URL has no conversation identifier.")
+        raise InvalidChatUrl(
+            "The ChatGPT conversation URL has no conversation identifier."
+        )
     return url.strip()
 
 
@@ -72,8 +84,11 @@ def load_project_url(path: Path = CONFIG_FILE) -> str:
         raw = json.loads(path.read_text(encoding="utf-8"))
         url = raw["project_url"]
     except FileNotFoundError as exc:
-        raise InvalidProjectUrl("No project is configured. Run: gpt setup <PROJECT_URL>") from exc
+        raise InvalidProjectUrl(
+            "No project is configured. Run: gpt setup <PROJECT_URL>"
+        ) from exc
     except (json.JSONDecodeError, KeyError, TypeError) as exc:
-        raise InvalidProjectUrl("The local configuration file is invalid. Run gpt setup again.") from exc
+        raise InvalidProjectUrl(
+            "The local configuration file is invalid. Run gpt setup again."
+        ) from exc
     return validate_project_url(url)
-

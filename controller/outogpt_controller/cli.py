@@ -10,9 +10,12 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from cli_gpt.config import save_project_url, validate_project_url
+from cli_gpt.setup import interactive_setup
+
 from .controller import OutogptController, _error_details
 from .errors import InvalidArgumentError
-from .paths import DEFAULT_DATABASE_PATH
+from .paths import DEFAULT_DATABASE_PATH, EXTENSION_DIR
 from .registry import Registry
 
 
@@ -22,7 +25,9 @@ class ControllerArgumentParser(argparse.ArgumentParser):
 
 
 def _add_output_option(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--json", action="store_true", help="Emit one JSON object to stdout.")
+    parser.add_argument(
+        "--json", action="store_true", help="Emit one JSON object to stdout."
+    )
 
 
 def _add_prompt_options(parser: argparse.ArgumentParser) -> None:
@@ -36,6 +41,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--database", type=Path, default=DEFAULT_DATABASE_PATH)
     groups = parser.add_subparsers(dest="group", required=True)
+    setup = groups.add_parser("setup", help="Prepare the dedicated Chrome profile.")
+    setup.add_argument("--project-url")
+
     chat = groups.add_parser("chat")
     commands = chat.add_subparsers(dest="command", required=True)
 
@@ -70,7 +78,9 @@ def _write(payload: dict[str, Any], as_json: bool) -> None:
         print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
         return
     if payload.get("ok"):
-        print(f"status: {payload.get('state') or payload.get('operation', {}).get('status')}")
+        print(
+            f"status: {payload.get('state') or payload.get('operation', {}).get('status')}"
+        )
         chat_id = payload.get("chat_id") or payload.get("chat", {}).get("chat_id")
         if chat_id:
             print(f"chat_id: {chat_id}")
@@ -92,6 +102,16 @@ def main(
     json_requested = "--json" in raw_argv
     try:
         args = build_parser().parse_args(raw_argv)
+        if args.group == "setup":
+            project_url = (
+                validate_project_url(args.project_url) if args.project_url else None
+            )
+            interactive_setup(extension_path=EXTENSION_DIR)
+            if project_url:
+                save_project_url(project_url)
+            print("OutoGPT Chrome setup completed.")
+            return 0
+
         controller = controller_factory(registry=Registry(args.database))
         if args.command == "create":
             payload = controller.create_chat(args.project_url, _prompt(args)).to_dict()
@@ -112,7 +132,12 @@ def main(
             "state": "FAILED",
             "error": {"code": code, "message": message},
         }
-        _write(payload, getattr(args, "json", json_requested) if args is not None else json_requested)
+        _write(
+            payload,
+            getattr(args, "json", json_requested)
+            if args is not None
+            else json_requested,
+        )
         return 1
 
 

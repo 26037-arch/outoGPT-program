@@ -10,7 +10,7 @@ from cli_gpt.browser import BrowserSession
 from cli_gpt.chatgpt import continue_chat_in_page, create_chat_in_page
 
 from ..errors import BrowserNotOpenError
-from ..paths import extension_directory
+from ..paths import EXTENSION_DIR
 
 
 class BrowserAdapter:
@@ -20,30 +20,32 @@ class BrowserAdapter:
         *,
         session_factory: Callable[..., Any] = BrowserSession,
     ):
-        self.extension_path = extension_directory(extension_path)
+        # The unpacked extension is installed manually into the persistent Chrome
+        # profile. Its path is retained for setup/documentation, not passed to Chrome.
+        self.extension_path = Path(extension_path or EXTENSION_DIR).expanduser().resolve()
         self.session_factory = session_factory
         self.session: Any = None
-        self.page: Any = None
+        self._session_owner: Any = None
 
     def open(self) -> "BrowserAdapter":
         if self.session is not None:
             return self
-        session = self.session_factory(extension_path=self.extension_path)
+        session = self.session_factory()
         entered = session.__enter__()
-        self.session = session
-        self.page = entered.page
+        self._session_owner = session
+        self.session = entered
         return self
 
     def close(self) -> None:
-        session, self.session = self.session, None
-        self.page = None
-        if session is not None:
-            session.__exit__(None, None, None)
+        owner, self._session_owner = self._session_owner, None
+        self.session = None
+        if owner is not None:
+            owner.__exit__(None, None, None)
 
-    def _page(self) -> Any:
-        if self.page is None:
+    def _session(self) -> Any:
+        if self.session is None:
             raise BrowserNotOpenError("BrowserAdapter.open() must be called first.")
-        return self.page
+        return self.session
 
     def create_chat(
         self,
@@ -52,9 +54,9 @@ class BrowserAdapter:
         *,
         progress: Callable[[str], None] | None = None,
     ) -> str:
-        return create_chat_in_page(
-            self._page(), project_url, prompt, progress=progress
-        )
+        session = self._session()
+        page = session.new_page()
+        return create_chat_in_page(page, project_url, prompt, progress=progress)
 
     def send_prompt(
         self,
@@ -63,9 +65,9 @@ class BrowserAdapter:
         *,
         progress: Callable[[str], None] | None = None,
     ) -> str:
-        return continue_chat_in_page(
-            self._page(), chat_url, prompt, progress=progress
-        )
+        session = self._session()
+        page = session.find_page(chat_url) or session.new_page()
+        return continue_chat_in_page(page, chat_url, prompt, progress=progress)
 
     def __enter__(self) -> "BrowserAdapter":
         return self.open()

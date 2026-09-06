@@ -207,7 +207,12 @@ def _wait_for_prompt_box(
             intervention_announced = True
 
         elapsed = time.monotonic() - started_at
-        if allow_new_chat_control and not needs_intervention and elapsed >= 3 and not new_chat_attempted:
+        if (
+            allow_new_chat_control
+            and not needs_intervention
+            and elapsed >= 3
+            and not new_chat_attempted
+        ):
             control = find_new_chat_control(page)
             if control is not None:
                 try:
@@ -315,7 +320,7 @@ def create_chat(
     project_url = validate_project_url(project_url)
     with BrowserSession() as browser:
         return create_chat_in_page(
-            browser.page,
+            browser.new_page(),
             project_url,
             prompt,
             progress=progress,
@@ -331,8 +336,9 @@ def continue_chat(
     """Continue an existing ChatGPT conversation and return its URL."""
     chat_url = validate_chat_url(chat_url)
     with BrowserSession() as browser:
+        page = browser.find_page(chat_url) or browser.new_page()
         return continue_chat_in_page(
-            browser.page,
+            page,
             chat_url,
             prompt,
             progress=progress,

@@ -1,6 +1,8 @@
 # Runtime state (may contain authenticated browser data)
 CLI-gpt/data/config.json
 CLI-gpt/data/browser.lock
+CLI-gpt/data/chrome-session.json
+CLI-gpt/data/browser-setup.json
 CLI-gpt/data/browser-profile/*
 !CLI-gpt/data/browser-profile/.gitkeep
 controller/data/

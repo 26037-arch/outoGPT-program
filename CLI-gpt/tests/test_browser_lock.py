@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from cli_gpt.browser import BrowserProfileLock
-from cli_gpt.errors import BrowserLaunchFailed
+from cli_gpt.errors import ChromeProfileInUse
 
 
 class BrowserProfileLockTests(unittest.TestCase):
@@ -18,7 +18,7 @@ class BrowserProfileLockTests(unittest.TestCase):
             first.acquire()
             try:
                 self.assertTrue(path.exists())
-                with self.assertRaises(BrowserLaunchFailed):
+                with self.assertRaises(ChromeProfileInUse):
                     second.acquire()
             finally:
                 first.release()
@@ -28,7 +28,9 @@ class BrowserProfileLockTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "browser.lock"
             path.write_text(
-                json.dumps({"pid": 2_147_483_647, "created_at": time.time(), "token": "old"}),
+                json.dumps(
+                    {"pid": 2_147_483_647, "created_at": time.time(), "token": "old"}
+                ),
                 encoding="utf-8",
             )
             lock = BrowserProfileLock(path)
@@ -43,4 +45,3 @@ class BrowserProfileLockTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

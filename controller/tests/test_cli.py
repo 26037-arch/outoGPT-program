@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 from outogpt_controller.cli import main
 from outogpt_controller.models import ControllerResult, OperationState
@@ -89,12 +90,29 @@ class CliTests(unittest.TestCase):
 
     def test_json_argument_error_is_still_one_json_object(self):
         code, stdout, stderr = self.run_cli(
-            ["chat", "create", "--project-url", "https://chatgpt.com/g/project", "--json"]
+            [
+                "chat",
+                "create",
+                "--project-url",
+                "https://chatgpt.com/g/project",
+                "--json",
+            ]
         )
         self.assertEqual(code, 1)
         self.assertEqual(stderr, "")
         self.assertEqual(len(stdout.splitlines()), 1)
         self.assertEqual(json.loads(stdout)["error"]["code"], "INVALID_ARGUMENT")
+
+    def test_setup_delegates_to_manual_chrome_flow(self):
+        stdout = io.StringIO()
+        with (
+            patch("outogpt_controller.cli.interactive_setup") as setup,
+            redirect_stdout(stdout),
+        ):
+            code = main(["setup"])
+        self.assertEqual(code, 0)
+        setup.assert_called_once()
+        self.assertIn("setup completed", stdout.getvalue().lower())
 
 
 if __name__ == "__main__":

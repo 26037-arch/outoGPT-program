@@ -33,7 +33,47 @@ class GenerationTimeout(CliGptError):
     pass
 
 
-class BrowserLaunchFailed(CliGptError):
+class BrowserError(CliGptError):
+    """Base class for expected Chrome/CDP lifecycle failures."""
+
+
+class BrowserLaunchFailed(BrowserError):
+    """Backward-compatible name for a Chrome launch failure."""
+
+
+class ChromeNotFound(BrowserLaunchFailed):
+    pass
+
+
+class ChromeLaunchFailed(BrowserLaunchFailed):
+    pass
+
+
+class ChromeDebugPortUnavailable(BrowserLaunchFailed):
+    pass
+
+
+class ChromeCdpConnectionFailed(BrowserError):
+    pass
+
+
+class ChromeProfileInUse(BrowserLaunchFailed):
+    pass
+
+
+class ChromeClosedUnexpectedly(BrowserError):
+    pass
+
+
+class NoChromeContext(BrowserError):
+    pass
+
+
+class NoChatGPTPage(BrowserError):
+    pass
+
+
+class LoginNotReady(BrowserError):
     pass
 
 
