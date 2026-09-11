@@ -8,6 +8,7 @@ from typing import Any
 
 from cli_gpt.browser import BrowserSession
 from cli_gpt.chatgpt import continue_chat_in_page, create_chat_in_page
+from cli_gpt.project import discover_project_chats, read_conversation
 
 from ..errors import BrowserNotOpenError
 from ..paths import EXTENSION_DIR
@@ -26,6 +27,7 @@ class BrowserAdapter:
         self.session_factory = session_factory
         self.session: Any = None
         self._session_owner: Any = None
+        self._project_page: Any = None
 
     def open(self) -> "BrowserAdapter":
         if self.session is not None:
@@ -39,6 +41,7 @@ class BrowserAdapter:
     def close(self) -> None:
         owner, self._session_owner = self._session_owner, None
         self.session = None
+        self._project_page = None
         if owner is not None:
             owner.__exit__(None, None, None)
 
@@ -68,6 +71,24 @@ class BrowserAdapter:
         session = self._session()
         page = session.find_page(chat_url) or session.new_page()
         return continue_chat_in_page(page, chat_url, prompt, progress=progress)
+
+    def _project_update_page(self) -> Any:
+        """Return one page reused sequentially for the whole project update."""
+        session = self._session()
+        if self._project_page is not None:
+            try:
+                if not self._project_page.is_closed():
+                    return self._project_page
+            except (AttributeError, TypeError):
+                return self._project_page
+        self._project_page = session.new_page()
+        return self._project_page
+
+    def discover_project_chats(self, project_url: str):
+        return discover_project_chats(self._project_update_page(), project_url)
+
+    def read_project_chat(self, chat):
+        return read_conversation(self._project_update_page(), chat)
 
     def __enter__(self) -> "BrowserAdapter":
         return self.open()

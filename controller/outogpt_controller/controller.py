@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
@@ -18,6 +19,8 @@ from .models import (
     StatusResult,
 )
 from .registry import Registry
+from .paths import DEFAULT_ARCHIVE_ROOT
+from .project_updater import ProjectUpdater, ProjectUpdateResult
 
 
 ERROR_CODES = {
@@ -40,6 +43,9 @@ ERROR_CODES = {
     "PageStructureChanged": "PAGE_STRUCTURE_CHANGED",
     "InvalidProjectUrl": "INVALID_PROJECT_URL",
     "InvalidChatUrl": "INVALID_CHAT_URL",
+    "ProjectAccessFailed": "PROJECT_ACCESS_FAILED",
+    "ProjectStateError": "PROJECT_STATE_ERROR",
+    "MarkdownArchiveError": "MARKDOWN_ARCHIVE_ERROR",
 }
 
 
@@ -227,3 +233,26 @@ class OutogptController:
         if chat is None or operation is None:
             raise UnknownChatError(f"Unknown chat_id: {chat_id}")
         return StatusResult(chat=chat, operation=operation)
+
+    def update_project(
+        self,
+        project_url: str,
+        *,
+        archive_root: Path = DEFAULT_ARCHIVE_ROOT,
+    ) -> ProjectUpdateResult:
+        """Synchronize one project through one existing Chrome/CDP session."""
+        browser = None
+        try:
+            browser = self.browser_factory()
+            browser.open()
+            return ProjectUpdater(browser, archive_root).update(project_url)
+        except Exception as error:
+            result = ProjectUpdateResult(False, project_url)
+            result.add_error(error)
+            return result
+        finally:
+            if browser is not None:
+                try:
+                    browser.close()
+                except Exception:
+                    pass

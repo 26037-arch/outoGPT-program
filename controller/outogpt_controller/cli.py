@@ -10,12 +10,13 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from cli_gpt.config import save_project_url, validate_project_url
+from cli_gpt.config import load_project_url, save_project_url, validate_project_url
+from cli_gpt.errors import InvalidProjectUrl
 from cli_gpt.setup import interactive_setup
 
 from .controller import OutogptController, _error_details
 from .errors import InvalidArgumentError
-from .paths import DEFAULT_DATABASE_PATH, EXTENSION_DIR
+from .paths import DEFAULT_ARCHIVE_ROOT, DEFAULT_DATABASE_PATH, EXTENSION_DIR
 from .registry import Registry
 
 
@@ -60,6 +61,21 @@ def build_parser() -> argparse.ArgumentParser:
     status = commands.add_parser("status")
     status.add_argument("--chat-id", required=True)
     _add_output_option(status)
+
+    project = groups.add_parser("project")
+    project_commands = project.add_subparsers(dest="command", required=True)
+    update = project_commands.add_parser("update")
+    update.add_argument(
+        "--project-url",
+        help="ChatGPT Project URL; defaults to the URL saved by setup.",
+    )
+    update.add_argument(
+        "--archive-root",
+        type=Path,
+        default=DEFAULT_ARCHIVE_ROOT,
+        help="Root directory for per-project Markdown archives.",
+    )
+    _add_output_option(update)
     return parser
 
 
@@ -77,7 +93,29 @@ def _write(payload: dict[str, Any], as_json: bool) -> None:
     if as_json:
         print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
         return
-    if payload.get("ok"):
+    if "discovered_chats" in payload:
+        print("status: completed" if payload.get("ok") else "status: completed_with_errors")
+        print(f"project_url: {payload.get('project_url', '')}")
+        print(f"project_name: {payload.get('project_name', '')}")
+        for key in (
+            "discovered_chats",
+            "new_chats",
+            "updated_chats",
+            "unchanged_chats",
+            "skipped_generating_chats",
+            "skipped_empty_chats",
+            "qa_pairs_appended",
+        ):
+            print(f"{key}: {payload.get(key, 0)}")
+        if payload.get("archive_directory"):
+            print(f"archive_directory: {payload['archive_directory']}")
+        for error in payload.get("errors") or ():
+            target = f"{error.get('chat_id')}: " if error.get("chat_id") else ""
+            print(
+                f"error: {target}{error.get('code')}: {error.get('message')}",
+                file=sys.stderr,
+            )
+    elif payload.get("ok"):
         print(
             f"status: {payload.get('state') or payload.get('operation', {}).get('status')}"
         )
@@ -113,7 +151,20 @@ def main(
             return 0
 
         controller = controller_factory(registry=Registry(args.database))
-        if args.command == "create":
+        if args.group == "project":
+            if args.project_url:
+                project_url = validate_project_url(args.project_url)
+            else:
+                try:
+                    project_url = load_project_url()
+                except InvalidProjectUrl as exc:
+                    raise InvalidArgumentError(
+                        "--project-url is required until setup has saved a project URL."
+                    ) from exc
+            payload = controller.update_project(
+                project_url, archive_root=args.archive_root
+            ).to_dict()
+        elif args.command == "create":
             payload = controller.create_chat(args.project_url, _prompt(args)).to_dict()
         elif args.command == "send":
             payload = controller.send_prompt(args.chat_id, _prompt(args)).to_dict()

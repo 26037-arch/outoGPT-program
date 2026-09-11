@@ -14,6 +14,9 @@ DEFAULT_DATA_DIR = Path(
     os.environ.get("OUTOGPT_DATA_DIR", REPOSITORY_ROOT / "controller" / "data")
 ).expanduser()
 DEFAULT_DATABASE_PATH = DEFAULT_DATA_DIR / "registry.sqlite3"
+DEFAULT_ARCHIVE_ROOT = Path(
+    os.environ.get("OUTOGPT_ARCHIVE_ROOT", Path.home() / ".outogpt" / "ChatGPT")
+).expanduser()
 
 
 def extension_directory(path: Path | None = None) -> Path:

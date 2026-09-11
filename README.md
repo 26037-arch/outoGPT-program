@@ -114,3 +114,31 @@ spoofing, stealth patch, or automatic extension installation is implemented.
 
 Unit tests mock the Chrome process and CDP boundary and do not require a ChatGPT
 login. The live integration test is opt-in and is not part of normal test runs.
+
+## Project Markdown updates
+
+Archive every currently visible conversation in a ChatGPT Project with:
+
+```powershell
+outogpt project update --project-url "https://chatgpt.com/g/g-p-.../project"
+outogpt project update --project-url "https://chatgpt.com/g/g-p-.../project" --json
+outogpt project update --archive-root "D:\ChatGPT archive"
+```
+
+When `--project-url` is omitted, the command uses the Project URL saved by
+`outogpt setup --project-url ...`. The default archive root is
+`~/.outogpt/ChatGPT/`. Each project directory contains `project.json`, `index.md`,
+and one `chats/<chat-id>.md` file per archived conversation. Project and chat IDs,
+not mutable titles, are used to recover existing archives and filenames safely.
+
+Updates are append-only at the completed QA-pair level. A pair is exactly one user
+message followed by one assistant message. Only newly completed pairs are appended,
+and completion markers prevent duplicate appends after an interrupted state write.
+Repeated runs therefore do not duplicate content. If ChatGPT reports fewer complete
+pairs than the archive already contains, the older archive is preserved unchanged.
+
+Chats that are still generating increment `skipped_generating_chats` in the result
+and are not written; other chats continue updating. A final user message without an
+assistant response is also left for a later run. Historical edits and regenerated
+answers are not detected when the completed QA-pair count is unchanged, because this
+command intentionally uses pair count rather than content hashes as its sync key.

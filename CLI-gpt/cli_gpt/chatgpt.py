@@ -159,6 +159,11 @@ def _sample_signals(page: Any) -> GenerationSignals:
     )
 
 
+def generation_in_progress(page: Any) -> bool:
+    """Use the same stop-control signal as the existing generation tracker."""
+    return _sample_signals(page).stop_visible
+
+
 def wait_for_generation(
     page: Any,
     baseline_assistant_count: int,

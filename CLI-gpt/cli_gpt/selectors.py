@@ -16,6 +16,59 @@ NEW_CHAT_NAME = re.compile(r"new chat(?: in .+)?|새 채팅", re.IGNORECASE)
 LOGIN_NAME = re.compile(r"log ?in|sign ?in|로그인", re.IGNORECASE)
 
 
+# Project-reading selectors stay in this single module so UI repairs do not leak
+# into discovery, storage, or controller code. Links are additionally validated
+# against the requested project id before they are accepted.
+PROJECT_CONVERSATION_REGIONS = (
+    '[data-testid="project-conversations"]',
+    '[data-testid*="project" i][data-testid*="conversation" i]',
+    'main [role="list"]',
+    "main",
+)
+PROJECT_CHAT_LINKS = ('a[href*="/c/"]',)
+PROJECT_NAMES = (
+    '[data-testid="project-name"]',
+    '[aria-label*="Project" i] h1',
+    "main h1",
+)
+PROJECT_EMPTY_STATES = (
+    '[data-testid*="empty" i]',
+    '[data-testid*="no-conversation" i]',
+)
+PROJECT_EMPTY_NAME = re.compile(
+    r"no (?:chats|conversations)|start (?:a |your )?(?:chat|conversation)"
+    r"|대화가 없습니다|채팅이 없습니다|새 채팅",
+    re.IGNORECASE,
+)
+CONVERSATION_TITLES = (
+    '[data-testid="conversation-title"]',
+    'nav [aria-current="page"]',
+    "main h1",
+)
+CONVERSATION_EMPTY_STATES = (
+    '[data-testid="conversation-empty-state"]',
+    '[data-testid*="empty-conversation" i]',
+)
+MESSAGE_ROOTS = (
+    '[data-message-author-role="user"]',
+    '[data-message-author-role="assistant"]',
+    'article[data-testid^="conversation-turn"] [data-message-author-role]',
+)
+MESSAGE_UI_EXCLUSIONS = (
+    "button",
+    "svg",
+    '[data-testid*="copy" i]',
+    '[data-testid*="feedback" i]',
+    '[data-testid*="reaction" i]',
+    '[aria-hidden="true"]',
+)
+PROJECT_ACCESS_ERROR_NAME = re.compile(
+    r"not found|no access|do not have access|permission"
+    r"|찾을 수 없|접근.*없|권한",
+    re.IGNORECASE,
+)
+
+
 def _each_match(locator: Any) -> Iterable[Any]:
     try:
         count = locator.count()
@@ -104,6 +157,19 @@ def login_or_challenge_visible(page: Any) -> bool:
         page.locator('[id*="captcha" i], [class*="captcha" i]'),
     ]
     return _first_usable(candidates) is not None
+
+
+def project_access_error_visible(page: Any) -> bool:
+    return (
+        _first_usable(
+            [
+                page.get_by_role("heading", name=PROJECT_ACCESS_ERROR_NAME),
+                page.get_by_role("alert", name=PROJECT_ACCESS_ERROR_NAME),
+                page.get_by_text(PROJECT_ACCESS_ERROR_NAME),
+            ]
+        )
+        is not None
+    )
 
 
 def assistant_response_count(page: Any) -> int:

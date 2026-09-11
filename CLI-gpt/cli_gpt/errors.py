@@ -6,15 +6,15 @@ class CliGptError(Exception):
 
 
 class LoginRequired(CliGptError):
-    pass
+    code = "LOGIN_REQUIRED"
 
 
 class InvalidProjectUrl(CliGptError):
-    pass
+    code = "INVALID_PROJECT_URL"
 
 
 class InvalidChatUrl(CliGptError):
-    pass
+    code = "INVALID_CHAT_URL"
 
 
 class PromptBoxNotFound(CliGptError):
@@ -82,4 +82,8 @@ class InvalidExtensionPath(CliGptError):
 
 
 class PageStructureChanged(CliGptError):
-    pass
+    code = "PAGE_STRUCTURE_CHANGED"
+
+
+class ProjectAccessFailed(CliGptError):
+    code = "PROJECT_ACCESS_FAILED"

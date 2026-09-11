@@ -6,8 +6,10 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+from cli_gpt.errors import InvalidProjectUrl, PageStructureChanged
 from outogpt_controller.cli import main
 from outogpt_controller.models import ControllerResult, OperationState
+from outogpt_controller.project_updater import ProjectUpdateResult
 
 
 class FakeController:
@@ -36,6 +38,21 @@ class FakeController:
             error_code="PROMPT_SEND_FAILED",
             error_message="failed",
         )
+
+    def update_project(self, project_url, *, archive_root):
+        result = ProjectUpdateResult(
+            True,
+            project_url,
+            project_name="Demo Project",
+            discovered_chats=2,
+            new_chats=1,
+            unchanged_chats=1,
+            qa_pairs_appended=3,
+        )
+        result.archive_directory = str(archive_root / "Demo Project")
+        if project_url.endswith("broken"):
+            result.add_error(PageStructureChanged("broken project DOM"))
+        return result
 
 
 class CliTests(unittest.TestCase):
@@ -113,6 +130,63 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         setup.assert_called_once()
         self.assertIn("setup completed", stdout.getvalue().lower())
+
+    def test_project_update_json_has_counters_and_archive_directory(self):
+        code, stdout, stderr = self.run_cli(
+            [
+                "project",
+                "update",
+                "--project-url",
+                "https://chatgpt.com/g/g-p-demo/project",
+                "--archive-root",
+                "archive",
+                "--json",
+            ]
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        payload = json.loads(stdout)
+        self.assertEqual(payload["discovered_chats"], 2)
+        self.assertEqual(payload["new_chats"], 1)
+        self.assertEqual(payload["qa_pairs_appended"], 3)
+        self.assertTrue(payload["archive_directory"].endswith("Demo Project"))
+
+    def test_project_update_uses_saved_url_when_option_is_omitted(self):
+        with patch(
+            "outogpt_controller.cli.load_project_url",
+            return_value="https://chatgpt.com/g/g-p-saved/project",
+        ):
+            code, stdout, _ = self.run_cli(["project", "update", "--json"])
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            json.loads(stdout)["project_url"],
+            "https://chatgpt.com/g/g-p-saved/project",
+        )
+
+    def test_project_update_without_saved_url_is_invalid_argument(self):
+        with patch(
+            "outogpt_controller.cli.load_project_url",
+            side_effect=InvalidProjectUrl("not configured"),
+        ):
+            code, stdout, stderr = self.run_cli(["project", "update", "--json"])
+        self.assertEqual(code, 1)
+        self.assertEqual(stderr, "")
+        self.assertEqual(json.loads(stdout)["error"]["code"], "INVALID_ARGUMENT")
+
+    def test_project_update_returns_one_json_object_and_exit_one_on_errors(self):
+        code, stdout, stderr = self.run_cli(
+            [
+                "project",
+                "update",
+                "--project-url",
+                "https://chatgpt.com/g/g-p-broken",
+                "--json",
+            ]
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(stderr, "")
+        self.assertEqual(len(stdout.splitlines()), 1)
+        self.assertEqual(json.loads(stdout)["errors"][0]["code"], "PAGE_STRUCTURE_CHANGED")
 
 
 if __name__ == "__main__":

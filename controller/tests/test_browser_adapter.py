@@ -11,6 +11,7 @@ class FakeSession:
         self.page = object()
         self.closed = False
         self.find_result = self.page
+        self.new_page_calls = 0
 
     def __enter__(self):
         return self
@@ -19,6 +20,7 @@ class FakeSession:
         self.closed = True
 
     def new_page(self):
+        self.new_page_calls += 1
         return self.page
 
     def find_page(self, url):
@@ -66,6 +68,28 @@ class BrowserAdapterTests(unittest.TestCase):
         ) as send:
             adapter.send_prompt("https://chatgpt.com/c/abc", "next")
         self.assertIs(send.call_args.args[0], session.page)
+        adapter.close()
+
+    def test_project_update_reuses_one_page_for_discovery_and_all_reads(self):
+        session = FakeSession()
+        adapter = BrowserAdapter(session_factory=lambda **_: session).open()
+        chat = object()
+        with (
+            patch(
+                "outogpt_controller.adapters.browser.discover_project_chats",
+                return_value="discovery",
+            ) as discover,
+            patch(
+                "outogpt_controller.adapters.browser.read_conversation",
+                side_effect=["first", "second"],
+            ) as read,
+        ):
+            self.assertEqual(adapter.discover_project_chats("project-url"), "discovery")
+            self.assertEqual(adapter.read_project_chat(chat), "first")
+            self.assertEqual(adapter.read_project_chat(chat), "second")
+        self.assertEqual(session.new_page_calls, 1)
+        self.assertTrue(all(call.args[0] is session.page for call in read.call_args_list))
+        self.assertIs(discover.call_args.args[0], session.page)
         adapter.close()
 
 

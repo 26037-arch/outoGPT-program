@@ -19,3 +19,11 @@ class BrowserNotOpenError(ControllerError):
 
 class InvalidArgumentError(ControllerError):
     code = "INVALID_ARGUMENT"
+
+
+class ProjectStateError(ControllerError):
+    code = "PROJECT_STATE_ERROR"
+
+
+class MarkdownArchiveError(ControllerError):
+    code = "MARKDOWN_ARCHIVE_ERROR"

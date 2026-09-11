@@ -36,3 +36,20 @@ outogpt chat status --chat-id "<conversation-id>" --json
 
 The passive archive adapter still reports `unconfirmed`: the installed extension can
 archive the page, but this milestone does not add Python-to-extension completion IPC.
+
+## Update a whole Project archive
+
+```powershell
+outogpt project update --project-url "https://chatgpt.com/g/g-p-.../project"
+outogpt project update --archive-root "D:\ChatGPT archive" --json
+```
+
+The Project URL may be omitted after it has been saved by setup. The default output
+is `~/.outogpt/ChatGPT/<sanitized-project-name>/`, containing `project.json`,
+`index.md`, and `chats/<chat-id>.md`. One browser session and one reusable page are
+used for the entire sequential update; no Chrome process is started per chat.
+
+Only complete user/assistant QA pairs are appended. Generating chats and trailing
+unanswered user messages are skipped without blocking other chats. Repeated updates
+are idempotent by completed-pair count. Content edits or regenerated answers with an
+unchanged pair count are intentionally outside this updater's detection model.
