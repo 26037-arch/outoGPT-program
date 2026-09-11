@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
@@ -20,6 +21,8 @@ from .models import (
     StatusResult,
 )
 from .registry import Registry
+from .paths import DEFAULT_ARCHIVE_ROOT
+from .project_updater import ProjectUpdater, ProjectUpdateResult
 
 
 ERROR_CODES = {
@@ -55,7 +58,9 @@ def _error_details(error: Exception) -> tuple[str, str]:
         return error.code, str(error)
     if isinstance(error, CliGptError):
         return error.code, str(error)
-    return ERROR_CODES.get(type(error).__name__, "CONTROLLER_INTERNAL_ERROR"), str(error)
+    return ERROR_CODES.get(type(error).__name__, "CONTROLLER_INTERNAL_ERROR"), str(
+        error
+    )
 
 
 class OutogptController:
@@ -155,9 +160,7 @@ class OutogptController:
         chat_url: str | None = None,
     ) -> ControllerResult:
         code, message = _error_details(error)
-        self.registry.fail_operation(
-            operation_id, code, message, chat_id=chat_id
-        )
+        self.registry.fail_operation(operation_id, code, message, chat_id=chat_id)
         return ControllerResult(
             ok=False,
             operation_id=operation_id,
@@ -189,9 +192,7 @@ class OutogptController:
             self.registry.transition(operation_id, OperationState.RESPONSE_COMPLETED)
             chat_id = extract_chat_id(chat_url)
             self.registry.attach_chat(operation_id, chat_id)
-            self.registry.save_chat(
-                chat_id, project_url, chat_url, operation_id
-            )
+            self.registry.save_chat(chat_id, project_url, chat_url, operation_id)
             self.registry.transition(operation_id, OperationState.ARCHIVING)
             archive = self.archive_adapter.wait_until_saved(
                 chat_id, timeout=self.archive_timeout
@@ -260,9 +261,7 @@ class OutogptController:
                     "Browser navigated to a different conversation after sending the prompt."
                 )
             chat_url = resulting_url
-            self.registry.save_chat(
-                chat_id, chat.project_url, chat_url, operation_id
-            )
+            self.registry.save_chat(chat_id, chat.project_url, chat_url, operation_id)
             self.registry.transition(operation_id, OperationState.ARCHIVING)
             archive = self.archive_adapter.wait_until_saved(
                 chat_id, timeout=self.archive_timeout
@@ -300,3 +299,26 @@ class OutogptController:
         if chat is None or operation is None:
             raise UnknownChatError(f"Unknown chat_id: {chat_id}")
         return StatusResult(chat=chat, operation=operation)
+
+    def update_project(
+        self,
+        project_url: str,
+        *,
+        archive_root: Path = DEFAULT_ARCHIVE_ROOT,
+    ) -> ProjectUpdateResult:
+        browser = None
+        try:
+            browser = self._acquire_browser()
+            if hasattr(browser, "prepare"):
+                browser.prepare(project_url)
+            return ProjectUpdater(browser, archive_root).update(project_url)
+        except Exception as error:
+            result = ProjectUpdateResult(False, project_url)
+            result.add_error(error)
+            return result
+        finally:
+            if browser is not None:
+                try:
+                    self._release_browser(browser)
+                except Exception:
+                    pass

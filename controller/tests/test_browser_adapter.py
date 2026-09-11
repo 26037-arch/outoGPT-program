@@ -9,6 +9,7 @@ class FakeSession:
     def __init__(self, **options):
         self.options = options
         self.page = object()
+        self.setup_page = self.page
         self.closed = False
 
     def __enter__(self):
@@ -47,6 +48,33 @@ class BrowserAdapterTests(unittest.TestCase):
         self.assertIs(create.call_args.args[0], sessions[0].page)
         self.assertIs(send.call_args.args[0], sessions[0].page)
         self.assertTrue(sessions[0].closed)
+
+    def test_project_update_reuses_the_manager_setup_page(self):
+        session = FakeSession()
+        adapter = BrowserAdapter(session_factory=lambda **options: session).open()
+        chat = object()
+        with (
+            patch(
+                "outogpt_controller.adapters.browser.discover_project_chats",
+                return_value="discovery",
+            ) as discover,
+            patch(
+                "outogpt_controller.adapters.browser.read_conversation",
+                return_value="snapshot",
+            ) as read,
+        ):
+            self.assertEqual(
+                adapter.discover_project_chats(
+                    "https://chatgpt.com/g/g-p-project/project"
+                ),
+                "discovery",
+            )
+            self.assertEqual(adapter.read_project_chat(chat), "snapshot")
+        discover.assert_called_once_with(
+            session.setup_page, "https://chatgpt.com/g/g-p-project/project"
+        )
+        read.assert_called_once_with(session.setup_page, chat)
+        adapter.close()
 
     def test_setup_waits_for_each_enter_before_verifying_and_retries(self):
         class Page:

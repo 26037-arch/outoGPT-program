@@ -14,10 +14,13 @@ DEFAULT_DATA_DIR = Path(
     os.environ.get("OUTOGPT_DATA_DIR", Path.home() / ".outogpt")
 ).expanduser()
 DEFAULT_DATABASE_PATH = DEFAULT_DATA_DIR / "registry.sqlite3"
+DEFAULT_ARCHIVE_ROOT = DEFAULT_DATA_DIR / "ChatGPT"
 
 
 def extension_directory(path: Path | None = None) -> Path:
-    candidate = (Path(path) if path is not None else EXTENSION_DIR).expanduser().resolve()
+    candidate = (
+        (Path(path) if path is not None else EXTENSION_DIR).expanduser().resolve()
+    )
     if not candidate.is_dir():
         raise InvalidExtensionPath(f"Extension directory does not exist: {candidate}")
     if not (candidate / "manifest.json").is_file():

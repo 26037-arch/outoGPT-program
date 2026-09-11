@@ -72,10 +72,32 @@ outogpt chat create --prompt "Analyze the repository" --json
 outogpt chat create --project-url "https://chatgpt.com/g/..." --prompt-file prompt.md --json
 outogpt chat send --chat-id "<conversation-id>" --prompt "Continue" --json
 outogpt chat status --chat-id "<conversation-id>" --json
+outogpt project update --project-url "https://chatgpt.com/g/g-p-.../project"
+outogpt project update --json
 ```
 
 The project verified by `setup` is used when `chat create` omits
 `--project-url`. Use `outogpt --help` for the implemented command tree.
+
+## Project Markdown updates
+
+`project update` discovers the conversations currently shown by the ChatGPT
+Project UI, including lazy-loaded entries, and stores one Markdown file per
+conversation under `~/.outogpt/ChatGPT/<Project name>/chats/`. Set a different
+root with `--archive-root` or by setting `OUTOGPT_DATA_DIR` before running the
+command. Each project directory also contains atomic `project.json` state and a
+small linked `index.md`.
+
+Synchronization is append-only by complete user/assistant QA-pair count. If a
+known file contains five saved pairs and ChatGPT contains seven, only Q6/A6 and
+Q7/A7 are appended. Historical edits and regenerated answers are intentionally
+ignored when the pair count is unchanged. A lower current count also leaves the
+archive unchanged.
+
+If ChatGPT is actively generating a response, that conversation is skipped
+completely until a later update; other project conversations continue. Running
+the command repeatedly is safe and does not duplicate saved QA pairs. Use
+`--json` for stable counters and per-chat errors.
 
 ## Conversation tabs
 
@@ -103,15 +125,15 @@ preserved.
 
 ```powershell
 $env:PYTHONPATH = "$(Resolve-Path ./CLI-gpt)"
-python -m unittest discover -s ./CLI-gpt/tests -v
+python -m pytest ./CLI-gpt/tests --ignore=./CLI-gpt/tests/integration -q
 
 $env:PYTHONPATH = "$(Resolve-Path ./CLI-gpt)$([IO.Path]::PathSeparator)$(Resolve-Path ./controller)"
-python -m unittest discover -s ./controller/tests -v
+python -m pytest ./controller/tests -q
 
 Push-Location ./extension
 node --test tests/*.test.js
 Pop-Location
 ```
 
-The default suite does not fake a successful real-account login. Live ChatGPT
-authentication and project access require manual verification.
+The commands above do not send prompts or require a ChatGPT account. Live
+ChatGPT authentication/project tests are separate and opt-in.

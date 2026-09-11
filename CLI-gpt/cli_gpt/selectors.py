@@ -8,9 +8,13 @@ from typing import Any
 
 from .errors import PromptBoxNotFound
 
-PROMPT_NAME = re.compile(r"message|prompt|ask|chatgpt|메시지|프롬프트|질문", re.IGNORECASE)
+PROMPT_NAME = re.compile(
+    r"message|prompt|ask|chatgpt|메시지|프롬프트|질문", re.IGNORECASE
+)
 SEND_NAME = re.compile(r"send(?: prompt| message)?|보내기|전송", re.IGNORECASE)
-STOP_NAME = re.compile(r"stop (?:generating|streaming)|생성 중지|응답 중지", re.IGNORECASE)
+STOP_NAME = re.compile(
+    r"stop (?:generating|streaming)|생성 중지|응답 중지", re.IGNORECASE
+)
 NEW_CHAT_NAME = re.compile(r"new chat(?: in .+)?|새 채팅|새 대화", re.IGNORECASE)
 LOGIN_NAME = re.compile(r"log ?in|sign ?in|로그인", re.IGNORECASE)
 ACCOUNT_NAME = re.compile(
@@ -20,6 +24,49 @@ ACCOUNT_NAME = re.compile(
 ACCESS_ERROR_NAME = re.compile(
     r"not found|no access|do not have access|permission|찾을 수 없|접근.*없|권한",
     re.IGNORECASE,
+)
+
+# Project updater selectors are kept here with the existing ChatGPT selectors so
+# DOM repairs remain localized.  The updater scopes links to the main project
+# content instead of the global sidebar, which may contain unrelated chats.
+PROJECT_CONVERSATION_REGIONS = (
+    '[data-testid="project-conversations"]',
+    '[data-testid*="project" i][data-testid*="conversation" i]',
+    'main [role="list"]',
+    "main",
+)
+PROJECT_CHAT_LINKS = ('a[href*="/c/"]',)
+PROJECT_NAMES = (
+    '[data-testid="project-name"]',
+    '[aria-label*="Project" i] h1',
+    "main h1",
+)
+PROJECT_EMPTY_STATES = (
+    '[data-testid*="empty" i]',
+    '[data-testid*="no-conversation" i]',
+)
+PROJECT_EMPTY_NAME = re.compile(
+    r"no (?:chats|conversations)|start (?:a |your )?(?:chat|conversation)"
+    r"|대화가 없습니다|채팅이 없습니다|새 채팅",
+    re.IGNORECASE,
+)
+CONVERSATION_TITLES = (
+    '[data-testid="conversation-title"]',
+    'nav [aria-current="page"]',
+    "main h1",
+)
+MESSAGE_ROOTS = (
+    '[data-message-author-role="user"]',
+    '[data-message-author-role="assistant"]',
+    'article[data-testid^="conversation-turn"] [data-message-author-role]',
+)
+MESSAGE_UI_EXCLUSIONS = (
+    "button",
+    "svg",
+    '[data-testid*="copy" i]',
+    '[data-testid*="feedback" i]',
+    '[data-testid*="reaction" i]',
+    '[aria-hidden="true"]',
 )
 
 
@@ -100,9 +147,7 @@ def find_stop_button(page: Any):
         [
             page.get_by_role("button", name=STOP_NAME),
             page.locator('[data-testid="stop-button"]'),
-            page.locator(
-                'button[aria-label*="Stop" i], button[aria-label*="중지"]'
-            ),
+            page.locator('button[aria-label*="Stop" i], button[aria-label*="중지"]'),
         ]
     )
 
@@ -147,13 +192,16 @@ def login_or_challenge_visible(page: Any) -> bool:
 
 
 def project_access_error_visible(page: Any) -> bool:
-    return _first_usable(
-        [
-            page.get_by_role("heading", name=ACCESS_ERROR_NAME),
-            page.get_by_role("alert", name=ACCESS_ERROR_NAME),
-            page.get_by_text(ACCESS_ERROR_NAME),
-        ]
-    ) is not None
+    return (
+        _first_usable(
+            [
+                page.get_by_role("heading", name=ACCESS_ERROR_NAME),
+                page.get_by_role("alert", name=ACCESS_ERROR_NAME),
+                page.get_by_text(ACCESS_ERROR_NAME),
+            ]
+        )
+        is not None
+    )
 
 
 def assistant_response_count(page: Any) -> int:

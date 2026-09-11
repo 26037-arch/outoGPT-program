@@ -70,7 +70,9 @@ def verify_chatgpt_login(page: Any) -> bool:
     # strongest stable cross-layout signal. Account/new-chat controls add an
     # independent positive signal when the current responsive layout exposes one.
     return composer_ready and (
-        account_ready or app_navigation_ready or "chatgpt.com" in getattr(page, "url", "")
+        account_ready
+        or app_navigation_ready
+        or "chatgpt.com" in getattr(page, "url", "")
     )
 
 
@@ -93,9 +95,13 @@ def verify_project_access(page: Any, project_url: str) -> bool:
     """Navigate to the configured project and prove that its composer is usable."""
     project_url = validate_project_url(project_url)
     try:
-        page.goto(project_url, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT * 1000)
+        page.goto(
+            project_url, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT * 1000
+        )
     except Exception as exc:
-        raise ProjectAccessFailed(f"Could not open the configured ChatGPT project: {exc}") from exc
+        raise ProjectAccessFailed(
+            f"Could not open the configured ChatGPT project: {exc}"
+        ) from exc
     if not verify_chatgpt_login(page) or project_access_error_visible(page):
         return False
     expected_marker = _project_marker(project_url)
@@ -231,6 +237,11 @@ def _sample_signals(page: Any) -> GenerationSignals:
     )
 
 
+def generation_in_progress(page: Any) -> bool:
+    """Return the same primary streaming signal used by generation waiting."""
+    return _sample_signals(page).stop_visible
+
+
 def wait_for_generation(
     page: Any,
     baseline_assistant_count: int,
@@ -279,7 +290,12 @@ def _wait_for_prompt_box(
             intervention_announced = True
 
         elapsed = time.monotonic() - started_at
-        if allow_new_chat_control and not needs_intervention and elapsed >= 3 and not new_chat_attempted:
+        if (
+            allow_new_chat_control
+            and not needs_intervention
+            and elapsed >= 3
+            and not new_chat_attempted
+        ):
             control = find_new_chat_control(page)
             if control is not None:
                 try:

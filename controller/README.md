@@ -21,6 +21,8 @@ outogpt chat create --project-url "https://chatgpt.com/g/..." --prompt-file prom
 outogpt chat create --prompt "Use the project saved by setup" --json
 outogpt chat send --chat-id "<conversation-id>" --prompt "Continue" --json
 outogpt chat status --chat-id "<conversation-id>" --json
+outogpt project update --project-url "https://chatgpt.com/g/g-p-.../project" --json
+outogpt project update
 ```
 
 Setup is interactive. OutoGPT initially performs no navigation or page
@@ -36,3 +38,11 @@ controller then verifies the service worker, restored session, and project.
 The default passive archive adapter deliberately reports `unconfirmed`. The extension
 runs in the same Chromium instance, but this version has no Python-to-extension IPC and
 therefore cannot prove that a filesystem write completed.
+
+`project update` uses the same authenticated persistent Chromium context, but
+performs its own snapshot archive under `~/.outogpt/ChatGPT/`. It discovers
+project chats from the UI, reuses one updater tab, and stores each chat in
+`chats/<chat_id>.md` with `project.json` and `index.md`. Only newly completed
+user/assistant pairs are appended. Historical edits are ignored, active
+generations are skipped for the next run, and repeated updates do not duplicate
+pairs. `--archive-root <path>` overrides the archive location.

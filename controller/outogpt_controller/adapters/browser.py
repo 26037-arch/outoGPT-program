@@ -15,6 +15,7 @@ from cli_gpt.chatgpt import (
 )
 from cli_gpt.config import validate_project_url
 from cli_gpt.errors import ChatGPTSessionRestoreFailed, ProjectAccessFailed
+from cli_gpt.project import discover_project_chats, read_conversation
 
 from ..errors import BrowserNotOpenError
 from ..paths import extension_directory
@@ -235,9 +236,7 @@ class BrowserAdapter:
                 from ..controller import extract_chat_id
 
                 chat_id = extract_chat_id(chat_url)
-            chat_session = manager.page_for_conversation(
-                chat_id, chat_url, project_url
-            )
+            chat_session = manager.page_for_conversation(chat_id, chat_url, project_url)
             page = chat_session.page
         else:
             chat_session = None
@@ -256,6 +255,18 @@ class BrowserAdapter:
             if chat_session is not None:
                 chat_session.status = ChatSessionStatus.ERROR
             raise
+
+    def discover_project_chats(self, project_url: str):
+        """Discover project conversations in the manager's reusable setup tab."""
+        manager = self._manager()
+        page = manager.setup_page or self.page
+        return discover_project_chats(page, project_url)
+
+    def read_project_chat(self, chat):
+        """Read one conversation in the same reusable updater tab."""
+        manager = self._manager()
+        page = manager.setup_page or self.page
+        return read_conversation(page, chat)
 
     def __enter__(self) -> "BrowserAdapter":
         return self.open()

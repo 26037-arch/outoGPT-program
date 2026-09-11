@@ -7,6 +7,7 @@ from pathlib import Path
 
 from outogpt_controller.cli import main
 from outogpt_controller.models import ControllerResult, OperationState
+from outogpt_controller.project_updater import ProjectUpdateResult
 
 
 class FakeController:
@@ -34,6 +35,20 @@ class FakeController:
             OperationState.FAILED,
             error_code="PROMPT_SEND_FAILED",
             error_message="failed",
+        )
+
+    def update_project(self, project_url, *, archive_root):
+        return ProjectUpdateResult(
+            True,
+            project_url,
+            "Project",
+            discovered_chats=10,
+            updated_chats=2,
+            new_chats=1,
+            unchanged_chats=6,
+            skipped_generating_chats=1,
+            qa_pairs_appended=4,
+            archive_directory=str(archive_root / "Project"),
         )
 
 
@@ -89,12 +104,39 @@ class CliTests(unittest.TestCase):
 
     def test_json_argument_error_is_still_one_json_object(self):
         code, stdout, stderr = self.run_cli(
-            ["chat", "create", "--project-url", "https://chatgpt.com/g/project", "--json"]
+            [
+                "chat",
+                "create",
+                "--project-url",
+                "https://chatgpt.com/g/project",
+                "--json",
+            ]
         )
         self.assertEqual(code, 1)
         self.assertEqual(stderr, "")
         self.assertEqual(len(stdout.splitlines()), 1)
         self.assertEqual(json.loads(stdout)["error"]["code"], "INVALID_ARGUMENT")
+
+    def test_project_update_json_has_stable_summary_counters(self):
+        code, stdout, stderr = self.run_cli(
+            [
+                "project",
+                "update",
+                "--project-url",
+                "https://chatgpt.com/g/g-p-project/project",
+                "--json",
+            ]
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        payload = json.loads(stdout)
+        self.assertEqual(payload["discovered_chats"], 10)
+        self.assertEqual(payload["updated_chats"], 2)
+        self.assertEqual(payload["new_chats"], 1)
+        self.assertEqual(payload["unchanged_chats"], 6)
+        self.assertEqual(payload["skipped_generating_chats"], 1)
+        self.assertEqual(payload["qa_pairs_appended"], 4)
+        self.assertEqual(payload["errors"], [])
 
 
 if __name__ == "__main__":

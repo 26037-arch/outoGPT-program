@@ -14,7 +14,7 @@ from cli_gpt.config import load_project_url, save_project_url
 
 from .controller import OutogptController, _error_details
 from .errors import InvalidArgumentError
-from .paths import DEFAULT_DATABASE_PATH
+from .paths import DEFAULT_ARCHIVE_ROOT, DEFAULT_DATABASE_PATH
 from .registry import Registry
 
 
@@ -24,7 +24,9 @@ class ControllerArgumentParser(argparse.ArgumentParser):
 
 
 def _add_output_option(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--json", action="store_true", help="Emit one JSON object to stdout.")
+    parser.add_argument(
+        "--json", action="store_true", help="Emit one JSON object to stdout."
+    )
 
 
 def _add_prompt_options(parser: argparse.ArgumentParser) -> None:
@@ -63,6 +65,21 @@ def build_parser() -> argparse.ArgumentParser:
     status = commands.add_parser("status")
     status.add_argument("--chat-id", required=True)
     _add_output_option(status)
+
+    project = groups.add_parser("project")
+    project_commands = project.add_subparsers(dest="command", required=True)
+    update = project_commands.add_parser("update")
+    update.add_argument(
+        "--project-url",
+        help="ChatGPT project URL (defaults to the URL verified by setup).",
+    )
+    update.add_argument(
+        "--archive-root",
+        type=Path,
+        default=DEFAULT_ARCHIVE_ROOT,
+        help="Root directory for per-project Markdown archives.",
+    )
+    _add_output_option(update)
     return parser
 
 
@@ -80,8 +97,28 @@ def _write(payload: dict[str, Any], as_json: bool) -> None:
     if as_json:
         print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
         return
-    if payload.get("ok"):
-        print(f"status: {payload.get('state') or payload.get('operation', {}).get('status')}")
+    if "discovered_chats" in payload:
+        status = "completed" if payload.get("ok") else "completed_with_errors"
+        print(f"status: {status}")
+        print(f"project: {payload.get('project_name') or payload.get('project_url')}")
+        print(f"discovered_chats: {payload.get('discovered_chats', 0)}")
+        print(f"updated_chats: {payload.get('updated_chats', 0)}")
+        print(f"new_chats: {payload.get('new_chats', 0)}")
+        print(f"unchanged_chats: {payload.get('unchanged_chats', 0)}")
+        print(f"skipped_generating_chats: {payload.get('skipped_generating_chats', 0)}")
+        print(f"qa_pairs_appended: {payload.get('qa_pairs_appended', 0)}")
+        if payload.get("archive_directory"):
+            print(f"archive_directory: {payload['archive_directory']}")
+        for error in payload.get("errors") or ():
+            prefix = f"{error.get('chat_id')}: " if error.get("chat_id") else ""
+            print(
+                f"error: {prefix}{error.get('code')}: {error.get('message')}",
+                file=sys.stderr,
+            )
+    elif payload.get("ok"):
+        print(
+            f"status: {payload.get('state') or payload.get('operation', {}).get('status')}"
+        )
         chat_id = payload.get("chat_id") or payload.get("chat", {}).get("chat_id")
         if chat_id:
             print(f"chat_id: {chat_id}")
@@ -110,7 +147,13 @@ def main(
             save_project_url(args.project_url)
             print("[setup] OutoGPT setup completed.")
             return 0
-        if args.command == "create":
+        if args.group == "project":
+            project_url = args.project_url or load_project_url()
+            payload = controller.update_project(
+                project_url,
+                archive_root=args.archive_root,
+            ).to_dict()
+        elif args.command == "create":
             project_url = args.project_url or load_project_url()
             payload = controller.create_chat(project_url, _prompt(args)).to_dict()
         elif args.command == "send":
@@ -130,7 +173,12 @@ def main(
             "state": "FAILED",
             "error": {"code": code, "message": message},
         }
-        _write(payload, getattr(args, "json", json_requested) if args is not None else json_requested)
+        _write(
+            payload,
+            getattr(args, "json", json_requested)
+            if args is not None
+            else json_requested,
+        )
         return 1
     finally:
         if controller is not None:
