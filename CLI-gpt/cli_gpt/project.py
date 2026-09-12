@@ -21,6 +21,8 @@ from .selectors import (
     CONVERSATION_TITLES,
     CONVERSATION_EMPTY_STATES,
     CONVERSATION_TURNS,
+    MESSAGE_ATTACHMENT_IMAGES,
+    MESSAGE_ATTACHMENT_NODES,
     MESSAGE_ROLE_NODES,
     MESSAGE_UI_EXCLUSIONS,
     PROJECT_CHAT_LINKS,
@@ -356,7 +358,8 @@ def pair_messages(messages: Iterable[Mapping[str, Any]]) -> tuple[QAPair, ...]:
 
 
 _CONVERSATION_SCRIPT = r"""
-({ rootSelectors, turnSelectors, roleSelectors, titleSelectors, emptySelectors, exclusions }) => {
+({ rootSelectors, turnSelectors, roleSelectors, attachmentSelectors, imageSelectors,
+   titleSelectors, emptySelectors, exclusions }) => {
   // OUTOGPT_CONVERSATION_EXTRACTION
   const text = (node) => String(node?.textContent || "");
   const clean = (value) => String(value || "")
@@ -511,17 +514,70 @@ _CONVERSATION_SCRIPT = r"""
       else pruneInactiveChildren(sourceChild, cloneChild);
     });
   };
+  const outermostActive = (root, selectors) => {
+    const nodes = query(root, selectors).filter((node) => !inactive(node, root));
+    return nodes.filter((node) => !nodes.some(
+      (other) => other !== node && other.contains(node)
+    ));
+  };
+  const attachmentName = (node) => {
+    const generic = /^(?:attachment|uploaded file|file|image attachment|첨부(?: 파일)?|이미지)$/i;
+    for (const attribute of ["data-filename", "data-file-name", "download", "title", "aria-label"]) {
+      const value = clean(node.getAttribute?.(attribute));
+      if (value && !generic.test(value)) return value.slice(0, 260);
+    }
+    const value = clean(node.textContent);
+    return value && value.length <= 260 && !generic.test(value) ? value : "";
+  };
+  const attachmentEvidence = (roleNode) => {
+    if (roleNode.getAttribute("data-message-author-role") !== "user") return [];
+    const fileNodes = outermostActive(roleNode, attachmentSelectors);
+    const evidence = fileNodes.map((node) => {
+      const name = attachmentName(node);
+      const descriptor = `${name} ${node.getAttribute?.("data-type") || ""}`.toLowerCase();
+      const image = /\.(?:avif|gif|jpe?g|png|webp)(?:\s|$)/i.test(name)
+        || descriptor.includes("image") || query(node, imageSelectors).length > 0;
+      return { kind: image ? "image" : "file", name };
+    });
+    for (const image of outermostActive(roleNode, imageSelectors)) {
+      if (fileNodes.some((node) => node.contains(image))) continue;
+      evidence.push({ kind: "image", name: "" });
+    }
+    return evidence;
+  };
+  const stableTurnId = (turn, roleNode) => {
+    for (const [attribute, node] of [
+      ["data-turn-id", turn],
+      ["data-message-id", turn],
+      ["data-message-id", roleNode],
+      ["data-turn-id", roleNode],
+      ["data-testid", turn]
+    ]) {
+      const value = String(node.getAttribute?.(attribute) || "").trim();
+      if (value) return `${attribute}:${value}`;
+    }
+    return "";
+  };
   let invalidTurns = 0;
   const messages = turns.map((turn) => {
     const roleNode = primaryRoleNode(turn);
     if (!roleNode) { invalidTurns += 1; return null; }
+    const attachments = attachmentEvidence(roleNode);
     const clone = roleNode.cloneNode(true);
     pruneInactiveChildren(roleNode, clone);
+    for (const selector of attachmentSelectors) {
+      try { clone.querySelectorAll(selector).forEach((node) => node.remove()); } catch (_) {}
+    }
     for (const selector of exclusions) {
       try { clone.querySelectorAll(selector).forEach((node) => node.remove()); } catch (_) {}
     }
     const content = clone.querySelector(".markdown") || clone;
-    return { role: roleNode.getAttribute("data-message-author-role"), markdown: clean(render(content)) };
+    return {
+      turnId: stableTurnId(turn, roleNode),
+      role: roleNode.getAttribute("data-message-author-role"),
+      markdown: clean(render(content)),
+      attachments
+    };
   }).filter(Boolean);
   let title = "";
   for (const selector of titleSelectors) {
@@ -552,6 +608,87 @@ _CONVERSATION_SCRIPT = r"""
 """
 
 
+_CONVERSATION_SCROLL_TOP_SCRIPT = r"""
+({ rootSelectors, turnSelectors }) => {
+  // OUTOGPT_CONVERSATION_SCROLL_TOP
+  const query = (root, selectors) => {
+    if (!root || !selectors.length) return [];
+    try { return [...root.querySelectorAll(selectors.join(","))]; } catch (_) { return []; }
+  };
+  const matches = (node, selectors) => {
+    try { return node.matches(selectors.join(",")); } catch (_) { return false; }
+  };
+  const inactive = (element, boundary = null) => {
+    for (let node = element; node && node.nodeType === Node.ELEMENT_NODE; node = node.parentElement) {
+      if (node.hidden || node.hasAttribute("inert")
+          || String(node.getAttribute("aria-hidden") || "").toLowerCase() === "true") return true;
+      const style = getComputedStyle(node);
+      if (style.display === "none" || style.visibility === "hidden"
+          || style.visibility === "collapse") return true;
+      if (node === boundary) break;
+    }
+    return false;
+  };
+  const topLevelTurns = (root) => {
+    const candidates = query(root, turnSelectors).filter((turn) => !inactive(turn, root));
+    return candidates.filter((turn) => !candidates.some(
+      (other) => other !== turn && other.contains(turn)
+    ));
+  };
+  let selected = null;
+  for (const root of query(document, rootSelectors)) {
+    if (matches(root, turnSelectors) || inactive(root)) continue;
+    const turns = topLevelTurns(root);
+    if (!turns.length) continue;
+    if (!selected || turns.length > selected.turns.length
+        || (turns.length === selected.turns.length && selected.root.contains(root))) {
+      selected = { root, turns };
+    }
+  }
+  if (!selected) return { found: false, atTop: false, wasAtTop: false };
+  let conversationRoot = selected.root;
+  let commonParent = selected.turns[0].parentElement;
+  while (commonParent && !selected.turns.every((turn) => commonParent.contains(turn))) {
+    commonParent = commonParent.parentElement;
+  }
+  if (commonParent && conversationRoot.contains(commonParent)) conversationRoot = commonParent;
+
+  let container = null;
+  for (let node = conversationRoot; node; node = node.parentElement) {
+    const style = getComputedStyle(node);
+    const overflow = String(style.overflowY || "").toLowerCase();
+    if (node.scrollHeight > node.clientHeight + 1
+        && ["auto", "scroll", "overlay"].includes(overflow)) {
+      container = node;
+      break;
+    }
+  }
+  let containerKind = "ancestor";
+  if (!container) {
+    container = document.scrollingElement || null;
+    containerKind = "document-fallback";
+  }
+  if (!container) return { found: false, atTop: false, wasAtTop: false };
+  const before = Number(container.scrollTop || 0);
+  try { container.scrollTo({ top: 0, behavior: "instant" }); }
+  catch (_) { container.scrollTop = 0; }
+  container.scrollTop = 0;
+  try { container.dispatchEvent(new Event("scroll", { bubbles: true })); } catch (_) {}
+  const after = Number(container.scrollTop || 0);
+  return {
+    found: true,
+    containerKind,
+    before,
+    after,
+    wasAtTop: before <= 1,
+    atTop: after <= 1,
+    scrollHeight: Number(container.scrollHeight || 0),
+    clientHeight: Number(container.clientHeight || 0)
+  };
+}
+"""
+
+
 def _conversation_sample(page: Any) -> Mapping[str, Any]:
     return page.evaluate(
         _CONVERSATION_SCRIPT,
@@ -559,10 +696,243 @@ def _conversation_sample(page: Any) -> Mapping[str, Any]:
             "rootSelectors": list(CONVERSATION_ROOTS),
             "turnSelectors": list(CONVERSATION_TURNS),
             "roleSelectors": list(MESSAGE_ROLE_NODES),
+            "attachmentSelectors": list(MESSAGE_ATTACHMENT_NODES),
+            "imageSelectors": list(MESSAGE_ATTACHMENT_IMAGES),
             "titleSelectors": list(CONVERSATION_TITLES),
             "emptySelectors": list(CONVERSATION_EMPTY_STATES),
             "exclusions": list(MESSAGE_UI_EXCLUSIONS),
         },
+    )
+
+
+def _scroll_conversation_history_to_top(page: Any) -> Mapping[str, Any]:
+    return page.evaluate(
+        _CONVERSATION_SCROLL_TOP_SCRIPT,
+        {
+            "rootSelectors": list(CONVERSATION_ROOTS),
+            "turnSelectors": list(CONVERSATION_TURNS),
+        },
+    )
+
+
+_IMAGE_MARKDOWN = re.compile(r"!\[[^\]]*\]\([^\s)]+(?:\s+[^)]*)?\)")
+
+
+def _normalize_conversation_messages(
+    messages: Iterable[Mapping[str, Any]],
+) -> tuple[dict[str, str], ...]:
+    """Add placeholders only when the DOM reported concrete attachment evidence."""
+    normalized: list[dict[str, str]] = []
+    for message in messages:
+        role = str(message.get("role") or "")
+        markdown = str(message.get("markdown") or "").strip()
+        additions: list[str] = []
+        for attachment in message.get("attachments") or ():
+            if not isinstance(attachment, Mapping):
+                continue
+            kind = str(attachment.get("kind") or "").strip().lower()
+            raw_name = re.sub(r"\s+", " ", str(attachment.get("name") or "")).strip()
+            name = raw_name[:260].replace("[", r"\[").replace("]", r"\]")
+            if kind == "image":
+                if _IMAGE_MARKDOWN.search(markdown):
+                    continue
+                placeholder = "[Image attachment]"
+            elif kind == "file":
+                placeholder = f"[Attachment: {name}]" if name else "[Attachment]"
+            else:
+                continue
+            if placeholder not in markdown and placeholder not in additions:
+                additions.append(placeholder)
+        if additions:
+            markdown = "\n\n".join(part for part in (markdown, *additions) if part)
+        normalized.append(
+            {
+                "turnId": str(message.get("turnId") or "").strip(),
+                "role": role,
+                "markdown": markdown,
+            }
+        )
+    return tuple(normalized)
+
+
+def _message_history_identity(message: Mapping[str, Any]) -> tuple[str, ...]:
+    turn_id = str(message.get("turnId") or "").strip()
+    role = str(message.get("role") or "")
+    markdown = str(message.get("markdown") or "")
+    return ("id", turn_id, role, markdown) if turn_id else ("content", role, markdown)
+
+
+def _history_fingerprint(
+    sample: Mapping[str, Any],
+    messages: tuple[dict[str, str], ...],
+    scroll_state: Mapping[str, Any],
+) -> tuple[Any, ...]:
+    identities = tuple(_message_history_identity(message) for message in messages)
+    first = identities[0] if identities else ()
+    last = identities[-1] if identities else ()
+    return (
+        int(sample.get("turnCount") or len(messages)),
+        first,
+        str(messages[0].get("role") or "") if messages else "",
+        last,
+        str(messages[-1].get("role") or "") if messages else "",
+        int(float(scroll_state.get("after") or 0)),
+        int(float(scroll_state.get("scrollHeight") or 0)),
+        int(sample.get("invalidTurns") or 0),
+        identities,
+    )
+
+
+def _stable_turn_ids(messages: tuple[dict[str, str], ...]) -> tuple[str, ...] | None:
+    identifiers = tuple(message["turnId"] for message in messages)
+    if not identifiers or any(not identifier for identifier in identifiers):
+        return None
+    return identifiers if len(set(identifiers)) == len(identifiers) else None
+
+
+def _merge_identified_history(
+    existing: tuple[dict[str, str], ...],
+    current: tuple[dict[str, str], ...],
+) -> tuple[dict[str, str], ...]:
+    existing_ids = _stable_turn_ids(existing)
+    current_ids = _stable_turn_ids(current)
+    if existing_ids is None or current_ids is None:
+        raise PageStructureChanged(
+            "Virtualized conversation turns did not expose stable unique identities."
+        )
+    existing_by_id = dict(zip(existing_ids, existing))
+    current_by_id = dict(zip(current_ids, current))
+    shared_current = [identifier for identifier in current_ids if identifier in existing_by_id]
+    shared_existing = [identifier for identifier in existing_ids if identifier in current_by_id]
+    if not shared_current or shared_current != shared_existing:
+        raise PageStructureChanged(
+            "Conversation history windows could not be merged without guessing turn order."
+        )
+    for identifier in shared_current:
+        old = existing_by_id[identifier]
+        new = current_by_id[identifier]
+        if old["role"] != new["role"]:
+            raise PageStructureChanged(
+                "A conversation turn identity changed role while history was loading."
+            )
+
+    merged: list[dict[str, str]] = []
+    existing_index = 0
+    current_index = 0
+    for identifier in shared_current:
+        next_existing = existing_ids.index(identifier, existing_index)
+        next_current = current_ids.index(identifier, current_index)
+        existing_gap = existing[existing_index:next_existing]
+        current_gap = current[current_index:next_current]
+        if existing_gap and current_gap:
+            raise PageStructureChanged(
+                "Conversation history windows contained an ambiguous gap between turns."
+            )
+        merged.extend(current_gap or existing_gap)
+        merged.append(current_by_id[identifier])
+        existing_index = next_existing + 1
+        current_index = next_current + 1
+    existing_tail = existing[existing_index:]
+    current_tail = current[current_index:]
+    if existing_tail and current_tail:
+        raise PageStructureChanged(
+            "Conversation history windows contained an ambiguous trailing gap."
+        )
+    merged.extend(current_tail or existing_tail)
+    return tuple(merged)
+
+
+def _contains_message_sequence(
+    larger: tuple[dict[str, str], ...], smaller: tuple[dict[str, str], ...]
+) -> bool:
+    if len(smaller) > len(larger):
+        return False
+    smaller_keys = tuple(_message_history_identity(message) for message in smaller)
+    larger_keys = tuple(_message_history_identity(message) for message in larger)
+    return any(
+        larger_keys[index : index + len(smaller_keys)] == smaller_keys
+        for index in range(len(larger_keys) - len(smaller_keys) + 1)
+    )
+
+
+def _merge_history_messages(
+    existing: tuple[dict[str, str], ...],
+    current: tuple[dict[str, str], ...],
+) -> tuple[dict[str, str], ...]:
+    if not existing:
+        return current
+    if not current:
+        return existing
+    if _stable_turn_ids(existing) is not None and _stable_turn_ids(current) is not None:
+        return _merge_identified_history(existing, current)
+    if _contains_message_sequence(current, existing):
+        return current
+    if _contains_message_sequence(existing, current):
+        return existing
+    raise PageStructureChanged(
+        "Virtualized conversation history changed without stable turn identities."
+    )
+
+
+def _hydrate_conversation_history(
+    page: Any,
+    *,
+    stable_rounds: int,
+    max_rounds: int,
+    poll_ms: int,
+) -> Mapping[str, Any] | None:
+    """Load older turns at the real scroll top before strict QA pairing."""
+    previous: tuple[Any, ...] | None = None
+    stable = 0
+    accumulated: tuple[dict[str, str], ...] = ()
+    for round_index in range(max_rounds):
+        if login_or_challenge_visible(page) or "/auth/" in getattr(page, "url", ""):
+            raise LoginRequired(
+                "ChatGPT authentication is required to read the conversation."
+            )
+        if generation_in_progress(page):
+            return None
+        sample = _conversation_sample(page)
+        if sample.get("recognized"):
+            messages = _normalize_conversation_messages(sample.get("messages") or ())
+            if not sample.get("invalidTurns"):
+                accumulated = _merge_history_messages(accumulated, messages)
+            if sample.get("explicitEmpty") and not messages:
+                scroll_state: Mapping[str, Any] = {
+                    "found": True,
+                    "wasAtTop": True,
+                    "atTop": True,
+                    "after": 0,
+                    "scrollHeight": 0,
+                }
+            else:
+                scroll_state = _scroll_conversation_history_to_top(page)
+            fingerprint = _history_fingerprint(sample, messages, scroll_state)
+            at_stable_top = bool(
+                scroll_state.get("found")
+                and scroll_state.get("wasAtTop")
+                and scroll_state.get("atTop")
+            )
+            if at_stable_top:
+                stable = stable + 1 if fingerprint == previous else 1
+            else:
+                stable = 0
+            previous = fingerprint
+            if stable >= stable_rounds:
+                if generation_in_progress(page):
+                    return None
+                if sample.get("invalidTurns"):
+                    raise PageStructureChanged(
+                        "A conversation turn did not expose exactly one primary user or assistant message."
+                    )
+                complete = dict(sample)
+                complete["messages"] = accumulated
+                complete["turnCount"] = len(accumulated)
+                return complete
+        if round_index + 1 < max_rounds:
+            page.wait_for_timeout(poll_ms)
+    raise PageStructureChanged(
+        "The complete conversation history did not stabilize before the scan limit."
     )
 
 
@@ -598,48 +968,19 @@ def read_conversation(
             f"Conversation {chat.chat_id} redirected to a different conversation."
         )
 
-    previous: tuple[tuple[str, str], ...] | None = None
-    stable = 0
-    latest: Mapping[str, Any] | None = None
-    for _ in range(max_rounds):
-        if login_or_challenge_visible(page) or "/auth/" in getattr(page, "url", ""):
-            raise LoginRequired(
-                "ChatGPT authentication is required to read the conversation."
-            )
-        if generation_in_progress(page):
-            return ConversationSnapshot(
-                chat.chat_id, chat.chat_url, chat.title, (), True
-            )
-        latest = _conversation_sample(page)
-        if latest.get("recognized"):
-            messages = latest.get("messages") or ()
-            fingerprint = (
-                ("__turn_count__", str(latest.get("turnCount") or len(messages))),
-                ("__invalid_turns__", str(latest.get("invalidTurns") or 0)),
-            ) + tuple(
-                (str(item.get("role") or ""), str(item.get("markdown") or ""))
-                for item in messages
-            )
-            stable = stable + 1 if fingerprint == previous else 1
-            previous = fingerprint
-            if stable >= stable_rounds:
-                if generation_in_progress(page):
-                    return ConversationSnapshot(
-                        chat.chat_id, chat.chat_url, chat.title, (), True
-                    )
-                if latest.get("invalidTurns"):
-                    raise PageStructureChanged(
-                        "A conversation turn did not expose exactly one primary user or assistant message."
-                    )
-                title = str(latest.get("title") or chat.title).strip() or chat.title
-                return ConversationSnapshot(
-                    chat.chat_id,
-                    validate_chat_url(getattr(page, "url", chat.chat_url)),
-                    title,
-                    pair_messages(messages),
-                    False,
-                )
-        page.wait_for_timeout(poll_ms)
-    raise PageStructureChanged(
-        f"Conversation {chat.chat_id} did not expose a stable recognizable message DOM."
+    complete = _hydrate_conversation_history(
+        page,
+        stable_rounds=stable_rounds,
+        max_rounds=max_rounds,
+        poll_ms=poll_ms,
+    )
+    if complete is None:
+        return ConversationSnapshot(chat.chat_id, chat.chat_url, chat.title, (), True)
+    title = str(complete.get("title") or chat.title).strip() or chat.title
+    return ConversationSnapshot(
+        chat.chat_id,
+        validate_chat_url(getattr(page, "url", chat.chat_url)),
+        title,
+        pair_messages(complete.get("messages") or ()),
+        False,
     )

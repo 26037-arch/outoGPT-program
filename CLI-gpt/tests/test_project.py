@@ -13,6 +13,51 @@ from cli_gpt.project import (
 PROJECT_URL = "https://chatgpt.com/g/g-p-project/project"
 
 
+def turn(turn_id, role, markdown, *, attachments=()):
+    return {
+        "turnId": turn_id,
+        "role": role,
+        "markdown": markdown,
+        "attachments": list(attachments),
+    }
+
+
+def qa_turns(first, last):
+    messages = []
+    for index in range(first, last + 1):
+        messages.extend(
+            [
+                turn(f"u{index}", "user", f"Q{index}"),
+                turn(f"a{index}", "assistant", f"A{index}"),
+            ]
+        )
+    return messages
+
+
+def conversation_sample(messages, *, title="Conversation"):
+    return {
+        "recognized": True,
+        "explicitEmpty": False,
+        "title": title,
+        "turnCount": len(messages),
+        "invalidTurns": 0,
+        "messages": messages,
+    }
+
+
+def scroll_state(*, before=0, height=100, kind="ancestor"):
+    return {
+        "found": True,
+        "containerKind": kind,
+        "before": before,
+        "after": 0,
+        "wasAtTop": before <= 1,
+        "atTop": True,
+        "scrollHeight": height,
+        "clientHeight": 100,
+    }
+
+
 class FakeProjectPage:
     def __init__(self, samples, scroll_results=()):
         self.url = PROJECT_URL
@@ -39,23 +84,43 @@ class FakeProjectPage:
 
 
 class FakeConversationPage:
-    def __init__(self, samples, chat_id="chat"):
+    def __init__(self, samples, scroll_results=(), chat_id="chat"):
         self.url = f"https://chatgpt.com/g/g-p-project/c/{chat_id}"
         self.samples = list(samples)
+        self.scroll_results = list(scroll_results)
         self.sample_index = 0
+        self.scroll_index = 0
         self.waits = []
         self.evaluate_arguments = []
+        self.scroll_scripts = []
 
     def goto(self, url, **kwargs):
         self.url = url
 
     def evaluate(self, script, argument):
-        if "OUTOGPT_CONVERSATION_EXTRACTION" not in script:
-            raise AssertionError("Unexpected page evaluation")
-        self.evaluate_arguments.append(argument)
-        index = min(self.sample_index, len(self.samples) - 1)
-        self.sample_index += 1
-        return self.samples[index]
+        if "OUTOGPT_CONVERSATION_EXTRACTION" in script:
+            self.evaluate_arguments.append(argument)
+            index = min(self.sample_index, len(self.samples) - 1)
+            self.sample_index += 1
+            return self.samples[index]
+        if "OUTOGPT_CONVERSATION_SCROLL_TOP" in script:
+            self.scroll_scripts.append(script)
+            if self.scroll_results:
+                index = min(self.scroll_index, len(self.scroll_results) - 1)
+                self.scroll_index += 1
+                return self.scroll_results[index]
+            self.scroll_index += 1
+            return {
+                "found": True,
+                "containerKind": "ancestor",
+                "before": 0,
+                "after": 0,
+                "wasAtTop": True,
+                "atTop": True,
+                "scrollHeight": 100,
+                "clientHeight": 100,
+            }
+        raise AssertionError("Unexpected page evaluation")
 
     def wait_for_timeout(self, milliseconds):
         self.waits.append(milliseconds)
@@ -307,6 +372,8 @@ class ProjectDomTests(unittest.TestCase):
             [(pair.user, pair.assistant) for pair in snapshot.qa_pairs],
             [("Q1", "A1"), ("Q2", "A2")],
         )
+        self.assertEqual(page.scroll_index, 1)
+        self.assertEqual(page.waits, [])
 
     @patch("cli_gpt.project.generation_in_progress", return_value=False)
     @patch("cli_gpt.project.login_or_challenge_visible", return_value=False)
@@ -421,6 +488,268 @@ class ProjectDomTests(unittest.TestCase):
         self.assertEqual(len(snapshot.qa_pairs), 1)
         self.assertEqual(page.sample_index, 4)
         self.assertEqual(page.waits, [0, 0, 0])
+
+    @patch("cli_gpt.project.pair_messages", wraps=pair_messages)
+    @patch("cli_gpt.project.generation_in_progress", return_value=False)
+    @patch("cli_gpt.project.login_or_challenge_visible", return_value=False)
+    def test_long_conversation_pairs_only_after_older_history_is_loaded(
+        self, _login, _generating, strict_pairing
+    ):
+        recent = conversation_sample(
+            [turn("a5", "assistant", "A5"), *qa_turns(6, 7)]
+        )
+        middle = conversation_sample(
+            [turn("a3", "assistant", "A3"), *qa_turns(4, 7)]
+        )
+        complete = conversation_sample(qa_turns(1, 7))
+        page = FakeConversationPage(
+            [recent, middle, complete, complete],
+            [
+                scroll_state(before=900, height=1000),
+                scroll_state(before=500, height=1400),
+                scroll_state(before=0, height=1800),
+                scroll_state(before=0, height=1800),
+            ],
+        )
+        chat = ProjectChat("chat", page.url, "Long")
+
+        snapshot = read_conversation(page, chat, stable_rounds=2, poll_ms=0)
+
+        self.assertEqual(len(snapshot.qa_pairs), 7)
+        strict_pairing.assert_called_once()
+        self.assertEqual(page.scroll_index, 4)
+
+    @patch("cli_gpt.project.generation_in_progress", return_value=False)
+    @patch("cli_gpt.project.login_or_challenge_visible", return_value=False)
+    def test_history_requires_repeated_top_scrolls_and_three_stable_rounds(
+        self, _login, _generating
+    ):
+        first = conversation_sample(qa_turns(20, 30))
+        second = conversation_sample(qa_turns(10, 30))
+        complete = conversation_sample(qa_turns(1, 30))
+        page = FakeConversationPage(
+            [first, second, complete, complete, complete, complete],
+            [
+                scroll_state(before=600, height=900),
+                scroll_state(before=400, height=1300),
+                scroll_state(before=200, height=1700),
+                scroll_state(before=0, height=1700),
+                scroll_state(before=0, height=1700),
+                scroll_state(before=0, height=1700),
+            ],
+        )
+        chat = ProjectChat("chat", page.url, "Long")
+
+        snapshot = read_conversation(
+            page, chat, stable_rounds=3, max_rounds=6, poll_ms=0
+        )
+
+        self.assertEqual(len(snapshot.qa_pairs), 30)
+        self.assertEqual(page.sample_index, 6)
+        self.assertEqual(page.scroll_index, 6)
+
+    @patch("cli_gpt.project.generation_in_progress", return_value=False)
+    @patch("cli_gpt.project.login_or_challenge_visible", return_value=False)
+    def test_same_turn_count_with_a_new_first_turn_resets_stability(
+        self, _login, _generating
+    ):
+        later = conversation_sample(qa_turns(20, 40))
+        earlier = conversation_sample(qa_turns(10, 30))
+        page = FakeConversationPage(
+            [later, earlier, earlier],
+            [scroll_state(), scroll_state(), scroll_state()],
+        )
+        chat = ProjectChat("chat", page.url, "Shifted")
+
+        snapshot = read_conversation(
+            page, chat, stable_rounds=2, max_rounds=3, poll_ms=0
+        )
+
+        self.assertEqual(page.sample_index, 3)
+        self.assertEqual(len(snapshot.qa_pairs), 31)
+
+    @patch("cli_gpt.project.generation_in_progress", return_value=False)
+    @patch("cli_gpt.project.login_or_challenge_visible", return_value=False)
+    def test_stable_turn_id_uses_the_latest_hydrated_markdown(
+        self, _login, _generating
+    ):
+        partial = conversation_sample(
+            [turn("u1", "user", "Q"), turn("a1", "assistant", "partial")]
+        )
+        complete = conversation_sample(
+            [turn("u1", "user", "Q"), turn("a1", "assistant", "complete answer")]
+        )
+        page = FakeConversationPage(
+            [partial, complete, complete],
+            [scroll_state(), scroll_state(), scroll_state()],
+        )
+        chat = ProjectChat("chat", page.url, "Hydrated")
+
+        snapshot = read_conversation(
+            page, chat, stable_rounds=2, max_rounds=3, poll_ms=0
+        )
+
+        self.assertEqual(snapshot.qa_pairs[0].assistant, "complete answer")
+
+    @patch("cli_gpt.project.generation_in_progress", return_value=False)
+    @patch("cli_gpt.project.login_or_challenge_visible", return_value=False)
+    def test_virtualized_overlapping_windows_are_accumulated_by_turn_id(
+        self, _login, _generating
+    ):
+        recent = conversation_sample(qa_turns(50, 80))
+        middle = conversation_sample(qa_turns(25, 55))
+        oldest = conversation_sample(qa_turns(1, 30))
+        page = FakeConversationPage(
+            [recent, middle, oldest, oldest],
+            [
+                scroll_state(before=800, height=1000),
+                scroll_state(before=600, height=1000),
+                scroll_state(before=0, height=1000),
+                scroll_state(before=0, height=1000),
+            ],
+        )
+        chat = ProjectChat("chat", page.url, "Virtualized")
+
+        snapshot = read_conversation(page, chat, stable_rounds=2, poll_ms=0)
+
+        self.assertEqual(len(snapshot.qa_pairs), 80)
+        self.assertEqual(snapshot.qa_pairs[0].user, "Q1")
+        self.assertEqual(snapshot.qa_pairs[-1].assistant, "A80")
+
+    @patch("cli_gpt.project.generation_in_progress", return_value=False)
+    @patch("cli_gpt.project.login_or_challenge_visible", return_value=False)
+    def test_virtualization_without_stable_turn_ids_is_rejected(
+        self, _login, _generating
+    ):
+        recent = conversation_sample(
+            [turn("", "user", "Q3"), turn("", "assistant", "A3")]
+        )
+        older = conversation_sample(
+            [turn("", "user", "Q1"), turn("", "assistant", "A1")]
+        )
+        page = FakeConversationPage(
+            [recent, older],
+            [scroll_state(before=100), scroll_state(before=0)],
+        )
+        chat = ProjectChat("chat", page.url, "Unsafe virtualization")
+
+        with self.assertRaises(PageStructureChanged):
+            read_conversation(page, chat, stable_rounds=1, max_rounds=2, poll_ms=0)
+
+    @patch("cli_gpt.project.generation_in_progress", return_value=False)
+    @patch("cli_gpt.project.login_or_challenge_visible", return_value=False)
+    def test_scroll_action_reports_the_ancestor_container(self, _login, _generating):
+        sample = conversation_sample(qa_turns(1, 1))
+        page = FakeConversationPage(
+            [sample], [scroll_state(before=0, kind="ancestor")]
+        )
+        chat = ProjectChat("chat", page.url, "Scrolled")
+
+        read_conversation(page, chat, stable_rounds=1, poll_ms=0)
+
+        self.assertEqual(page.scroll_index, 1)
+        script = page.scroll_scripts[0]
+        self.assertIn("style.overflowY", script)
+        self.assertIn("document.scrollingElement", script)
+        self.assertNotIn("window.scrollTo", script)
+
+    @patch("cli_gpt.project.generation_in_progress", return_value=False)
+    @patch("cli_gpt.project.login_or_challenge_visible", return_value=False)
+    def test_attachment_only_user_gets_a_named_placeholder(
+        self, _login, _generating
+    ):
+        sample = conversation_sample(
+            [
+                turn(
+                    "u1",
+                    "user",
+                    "",
+                    attachments=({"kind": "file", "name": "report.pdf"},),
+                ),
+                turn("a1", "assistant", "Analysis"),
+            ]
+        )
+        page = FakeConversationPage([sample])
+        chat = ProjectChat("chat", page.url, "Attachment")
+
+        snapshot = read_conversation(page, chat, stable_rounds=1, poll_ms=0)
+
+        self.assertEqual(snapshot.qa_pairs[0].user, "[Attachment: report.pdf]")
+
+    @patch("cli_gpt.project.generation_in_progress", return_value=False)
+    @patch("cli_gpt.project.login_or_challenge_visible", return_value=False)
+    def test_image_only_user_gets_an_image_placeholder(self, _login, _generating):
+        sample = conversation_sample(
+            [
+                turn(
+                    "u1",
+                    "user",
+                    "",
+                    attachments=({"kind": "image", "name": ""},),
+                ),
+                turn("a1", "assistant", "Description"),
+            ]
+        )
+        page = FakeConversationPage([sample])
+        chat = ProjectChat("chat", page.url, "Image")
+
+        snapshot = read_conversation(page, chat, stable_rounds=1, poll_ms=0)
+
+        self.assertEqual(snapshot.qa_pairs[0].user, "[Image attachment]")
+
+    @patch("cli_gpt.project.generation_in_progress", return_value=False)
+    @patch("cli_gpt.project.login_or_challenge_visible", return_value=False)
+    def test_text_and_attachment_are_both_preserved(self, _login, _generating):
+        sample = conversation_sample(
+            [
+                turn(
+                    "u1",
+                    "user",
+                    "Analyze this file",
+                    attachments=({"kind": "file", "name": "report.pdf"},),
+                ),
+                turn("a1", "assistant", "Analysis"),
+            ]
+        )
+        page = FakeConversationPage([sample])
+        chat = ProjectChat("chat", page.url, "Attachment")
+
+        snapshot = read_conversation(page, chat, stable_rounds=1, poll_ms=0)
+
+        self.assertEqual(
+            snapshot.qa_pairs[0].user,
+            "Analyze this file\n\n[Attachment: report.pdf]",
+        )
+
+    @patch("cli_gpt.project.generation_in_progress", return_value=False)
+    @patch("cli_gpt.project.login_or_challenge_visible", return_value=False)
+    def test_empty_turn_without_attachment_evidence_is_rejected(
+        self, _login, _generating
+    ):
+        sample = conversation_sample(
+            [turn("u1", "user", ""), turn("a1", "assistant", "Answer")]
+        )
+        page = FakeConversationPage([sample])
+        chat = ProjectChat("chat", page.url, "Empty")
+
+        with self.assertRaises(PageStructureChanged):
+            read_conversation(page, chat, stable_rounds=1, poll_ms=0)
+
+    @patch("cli_gpt.project.generation_in_progress", return_value=False)
+    @patch("cli_gpt.project.login_or_challenge_visible", return_value=False)
+    def test_history_that_never_stabilizes_is_rejected(self, _login, _generating):
+        first = conversation_sample(qa_turns(2, 4))
+        second = conversation_sample(qa_turns(1, 3))
+        page = FakeConversationPage(
+            [first, second, first, second],
+            [scroll_state(), scroll_state(), scroll_state(), scroll_state()],
+        )
+        chat = ProjectChat("chat", page.url, "Unstable")
+
+        with self.assertRaises(PageStructureChanged):
+            read_conversation(
+                page, chat, stable_rounds=2, max_rounds=4, poll_ms=0
+            )
 
     def test_explicit_pairing_ignores_only_a_trailing_user(self):
         pairs = pair_messages(

@@ -68,6 +68,23 @@ MESSAGE_ROLE_NODES = (
     '[data-message-author-role="user"]',
     '[data-message-author-role="assistant"]',
 )
+MESSAGE_ATTACHMENT_NODES = (
+    '[data-testid*="attachment" i]',
+    '[data-testid*="upload" i]',
+    '[data-testid*="uploaded-file" i]',
+    '[data-testid*="file" i]',
+    '[aria-label*="attachment" i]',
+    '[aria-label*="uploaded file" i]',
+    "a[download]",
+)
+MESSAGE_ATTACHMENT_IMAGES = (
+    '[data-testid*="attachment" i] img',
+    '[data-testid*="upload" i] img',
+    'img[alt*="attachment" i]',
+    'img[alt*="uploaded" i]',
+    "a[download] img",
+    ".markdown img",
+)
 MESSAGE_UI_EXCLUSIONS = (
     "button",
     "svg",

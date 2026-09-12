@@ -4,6 +4,8 @@ from cli_gpt.errors import PromptBoxNotFound
 from cli_gpt.selectors import (
     CONVERSATION_ROOTS,
     CONVERSATION_TURNS,
+    MESSAGE_ATTACHMENT_IMAGES,
+    MESSAGE_ATTACHMENT_NODES,
     MESSAGE_ROLE_NODES,
     PROJECT_CONVERSATION_REGIONS,
     PROJECT_NAMES,
@@ -67,6 +69,12 @@ class SelectorTests(unittest.TestCase):
                 '[data-message-author-role="assistant"]',
             },
         )
+
+    def test_attachment_selectors_require_concrete_dom_evidence(self):
+        self.assertIn('[data-testid*="attachment" i]', MESSAGE_ATTACHMENT_NODES)
+        self.assertIn("a[download]", MESSAGE_ATTACHMENT_NODES)
+        self.assertIn(".markdown img", MESSAGE_ATTACHMENT_IMAGES)
+        self.assertNotIn("img", MESSAGE_ATTACHMENT_IMAGES)
 
     def test_generic_main_is_only_a_fallback_project_region(self):
         self.assertIn("main", PROJECT_CONVERSATION_REGIONS)
