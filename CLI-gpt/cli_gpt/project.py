@@ -17,9 +17,11 @@ from .errors import (
     ProjectAccessFailed,
 )
 from .selectors import (
+    CONVERSATION_ROOTS,
     CONVERSATION_TITLES,
     CONVERSATION_EMPTY_STATES,
-    MESSAGE_ROOTS,
+    CONVERSATION_TURNS,
+    MESSAGE_ROLE_NODES,
     MESSAGE_UI_EXCLUSIONS,
     PROJECT_CHAT_LINKS,
     PROJECT_CONVERSATION_REGIONS,
@@ -354,11 +356,62 @@ def pair_messages(messages: Iterable[Mapping[str, Any]]) -> tuple[QAPair, ...]:
 
 
 _CONVERSATION_SCRIPT = r"""
-({ messageSelectors, titleSelectors, emptySelectors, exclusions }) => {
+({ rootSelectors, turnSelectors, roleSelectors, titleSelectors, emptySelectors, exclusions }) => {
   // OUTOGPT_CONVERSATION_EXTRACTION
   const text = (node) => String(node?.textContent || "");
   const clean = (value) => String(value || "")
     .replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  const query = (root, selectors) => {
+    if (!root || !selectors.length) return [];
+    try { return [...root.querySelectorAll(selectors.join(","))]; } catch (_) { return []; }
+  };
+  const matches = (node, selectors) => {
+    if (!node || !selectors.length) return false;
+    try { return node.matches(selectors.join(",")); } catch (_) { return false; }
+  };
+  const inactive = (element, boundary = null) => {
+    for (let node = element; node && node.nodeType === Node.ELEMENT_NODE; node = node.parentElement) {
+      if (node.hidden || node.hasAttribute("inert")
+          || String(node.getAttribute("aria-hidden") || "").toLowerCase() === "true") return true;
+      try {
+        const style = getComputedStyle(node);
+        if (style.display === "none" || style.visibility === "hidden"
+            || style.visibility === "collapse") return true;
+      } catch (_) {}
+      if (node === boundary) break;
+    }
+    return false;
+  };
+  const topLevelTurns = (root) => {
+    const candidates = query(root, turnSelectors).filter((turn) => !inactive(turn, root));
+    return candidates.filter((turn) => !candidates.some(
+      (other) => other !== turn && other.contains(turn)
+    ));
+  };
+  const rootCandidates = query(document, rootSelectors).filter(
+    (root) => !matches(root, turnSelectors) && !inactive(root)
+  );
+  let selected = null;
+  for (const root of rootCandidates) {
+    const turns = topLevelTurns(root);
+    if (!turns.length) continue;
+    if (!selected || turns.length > selected.turns.length
+        || (turns.length === selected.turns.length && selected.root.contains(root))) {
+      selected = { root, turns };
+    }
+  }
+  let conversationRoot = selected?.root || null;
+  let turns = selected?.turns || [];
+  if (conversationRoot && turns.length) {
+    let commonParent = turns[0].parentElement;
+    while (commonParent && !turns.every((turn) => commonParent.contains(turn))) {
+      commonParent = commonParent.parentElement;
+    }
+    if (commonParent && conversationRoot.contains(commonParent)) {
+      conversationRoot = commonParent;
+      turns = topLevelTurns(conversationRoot);
+    }
+  }
   const ticks = (value, minimum = 1) => {
     const runs = String(value).match(/`+/g) || [];
     return "`".repeat(Math.max(minimum, ...runs.map((run) => run.length + 1)));
@@ -423,15 +476,47 @@ _CONVERSATION_SCRIPT = r"""
     if (tag === "img") return `![${node.getAttribute("alt") || ""}](${node.getAttribute("src") || ""})`;
     return inner();
   };
-  const roots = [];
-  for (const selector of messageSelectors) {
-    try { roots.push(...document.querySelectorAll(selector)); } catch (_) {}
-  }
-  const messages = [...new Set(roots)].map((root) => {
-    const roleNode = root.matches("[data-message-author-role]")
-      ? root : root.querySelector("[data-message-author-role]");
-    if (!roleNode) return null;
+  const depthFromTurn = (node, turn) => {
+    let depth = 0;
+    for (let current = node; current && current !== turn; current = current.parentElement) depth += 1;
+    return depth;
+  };
+  const primaryRoleNode = (turn) => {
+    const roleNodes = [
+      ...(matches(turn, roleSelectors) ? [turn] : []),
+      ...query(turn, roleSelectors)
+    ].filter(
+      (node) => !inactive(node, turn)
+    );
+    const roles = new Set(roleNodes.map(
+      (node) => node.getAttribute("data-message-author-role")
+    ));
+    if (roles.size !== 1) return null;
+    const outermost = roleNodes.filter((node) => !roleNodes.some(
+      (other) => other !== node && other.contains(node)
+    ));
+    if (!outermost.length) return null;
+    const minimumDepth = Math.min(...outermost.map((node) => depthFromTurn(node, turn)));
+    const primary = outermost.filter((node) => depthFromTurn(node, turn) === minimumDepth);
+    if (primary.length !== 1) return null;
+    return primary[0];
+  };
+  const pruneInactiveChildren = (source, clone) => {
+    const sourceChildren = [...source.children];
+    const cloneChildren = [...clone.children];
+    sourceChildren.forEach((sourceChild, index) => {
+      const cloneChild = cloneChildren[index];
+      if (!cloneChild) return;
+      if (inactive(sourceChild, source)) cloneChild.remove();
+      else pruneInactiveChildren(sourceChild, cloneChild);
+    });
+  };
+  let invalidTurns = 0;
+  const messages = turns.map((turn) => {
+    const roleNode = primaryRoleNode(turn);
+    if (!roleNode) { invalidTurns += 1; return null; }
     const clone = roleNode.cloneNode(true);
+    pruneInactiveChildren(roleNode, clone);
     for (const selector of exclusions) {
       try { clone.querySelectorAll(selector).forEach((node) => node.remove()); } catch (_) {}
     }
@@ -455,7 +540,14 @@ _CONVERSATION_SCRIPT = r"""
       })) explicitEmpty = true;
     } catch (_) {}
   }
-  return { recognized: messages.length > 0 || explicitEmpty, explicitEmpty, title, messages };
+  return {
+    recognized: turns.length > 0 || explicitEmpty,
+    explicitEmpty,
+    title,
+    turnCount: turns.length,
+    invalidTurns,
+    messages
+  };
 }
 """
 
@@ -464,7 +556,9 @@ def _conversation_sample(page: Any) -> Mapping[str, Any]:
     return page.evaluate(
         _CONVERSATION_SCRIPT,
         {
-            "messageSelectors": list(MESSAGE_ROOTS),
+            "rootSelectors": list(CONVERSATION_ROOTS),
+            "turnSelectors": list(CONVERSATION_TURNS),
+            "roleSelectors": list(MESSAGE_ROLE_NODES),
             "titleSelectors": list(CONVERSATION_TITLES),
             "emptySelectors": list(CONVERSATION_EMPTY_STATES),
             "exclusions": list(MESSAGE_UI_EXCLUSIONS),
@@ -518,9 +612,13 @@ def read_conversation(
             )
         latest = _conversation_sample(page)
         if latest.get("recognized"):
-            fingerprint = tuple(
+            messages = latest.get("messages") or ()
+            fingerprint = (
+                ("__turn_count__", str(latest.get("turnCount") or len(messages))),
+                ("__invalid_turns__", str(latest.get("invalidTurns") or 0)),
+            ) + tuple(
                 (str(item.get("role") or ""), str(item.get("markdown") or ""))
-                for item in latest.get("messages") or ()
+                for item in messages
             )
             stable = stable + 1 if fingerprint == previous else 1
             previous = fingerprint
@@ -529,12 +627,16 @@ def read_conversation(
                     return ConversationSnapshot(
                         chat.chat_id, chat.chat_url, chat.title, (), True
                     )
+                if latest.get("invalidTurns"):
+                    raise PageStructureChanged(
+                        "A conversation turn did not expose exactly one primary user or assistant message."
+                    )
                 title = str(latest.get("title") or chat.title).strip() or chat.title
                 return ConversationSnapshot(
                     chat.chat_id,
                     validate_chat_url(getattr(page, "url", chat.chat_url)),
                     title,
-                    pair_messages(latest.get("messages") or ()),
+                    pair_messages(messages),
                     False,
                 )
         page.wait_for_timeout(poll_ms)

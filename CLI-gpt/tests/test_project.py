@@ -38,6 +38,29 @@ class FakeProjectPage:
         self.waits.append(milliseconds)
 
 
+class FakeConversationPage:
+    def __init__(self, samples, chat_id="chat"):
+        self.url = f"https://chatgpt.com/g/g-p-project/c/{chat_id}"
+        self.samples = list(samples)
+        self.sample_index = 0
+        self.waits = []
+        self.evaluate_arguments = []
+
+    def goto(self, url, **kwargs):
+        self.url = url
+
+    def evaluate(self, script, argument):
+        if "OUTOGPT_CONVERSATION_EXTRACTION" not in script:
+            raise AssertionError("Unexpected page evaluation")
+        self.evaluate_arguments.append(argument)
+        index = min(self.sample_index, len(self.samples) - 1)
+        self.sample_index += 1
+        return self.samples[index]
+
+    def wait_for_timeout(self, milliseconds):
+        self.waits.append(milliseconds)
+
+
 class ProjectDomTests(unittest.TestCase):
     @patch("cli_gpt.project.project_access_error_visible", return_value=False)
     @patch("cli_gpt.project.login_or_challenge_visible", return_value=False)
@@ -257,6 +280,148 @@ class ProjectDomTests(unittest.TestCase):
         with self.assertRaises(LoginRequired):
             discover_project_chats(page, PROJECT_URL, poll_ms=0)
 
+    @patch("cli_gpt.project.generation_in_progress", return_value=False)
+    @patch("cli_gpt.project.login_or_challenge_visible", return_value=False)
+    def test_conversation_turn_sequence_produces_two_pairs(
+        self, _login, _generating
+    ):
+        sample = {
+            "recognized": True,
+            "explicitEmpty": False,
+            "title": "Conversation",
+            "turnCount": 4,
+            "invalidTurns": 0,
+            "messages": [
+                {"role": "user", "markdown": "Q1"},
+                {"role": "assistant", "markdown": "A1"},
+                {"role": "user", "markdown": "Q2"},
+                {"role": "assistant", "markdown": "A2"},
+            ],
+        }
+        page = FakeConversationPage([sample])
+        chat = ProjectChat("chat", page.url, "Conversation")
+
+        snapshot = read_conversation(page, chat, stable_rounds=1, poll_ms=0)
+
+        self.assertEqual(
+            [(pair.user, pair.assistant) for pair in snapshot.qa_pairs],
+            [("Q1", "A1"), ("Q2", "A2")],
+        )
+
+    @patch("cli_gpt.project.generation_in_progress", return_value=False)
+    @patch("cli_gpt.project.login_or_challenge_visible", return_value=False)
+    def test_overlapping_role_selectors_still_return_one_message_per_turn(
+        self, _login, _generating
+    ):
+        sample = {
+            "recognized": True,
+            "explicitEmpty": False,
+            "title": "Conversation",
+            "turnCount": 2,
+            "invalidTurns": 0,
+            "messages": [
+                {"role": "user", "markdown": "one user message"},
+                {"role": "assistant", "markdown": "one assistant message"},
+            ],
+        }
+        page = FakeConversationPage([sample])
+        chat = ProjectChat("chat", page.url, "Conversation")
+
+        snapshot = read_conversation(page, chat, stable_rounds=1, poll_ms=0)
+
+        self.assertEqual(len(snapshot.qa_pairs), 1)
+        arguments = page.evaluate_arguments[0]
+        self.assertNotIn("messageSelectors", arguments)
+        self.assertIn(
+            'article[data-testid^="conversation-turn"]', arguments["turnSelectors"]
+        )
+
+    @patch("cli_gpt.project.generation_in_progress", return_value=False)
+    @patch("cli_gpt.project.login_or_challenge_visible", return_value=False)
+    def test_hidden_branch_is_excluded_from_current_turn_sequence(
+        self, _login, _generating
+    ):
+        sample = {
+            "recognized": True,
+            "explicitEmpty": False,
+            "title": "Branched",
+            "turnCount": 2,
+            "invalidTurns": 0,
+            "messages": [
+                {"role": "user", "markdown": "visible user A prime"},
+                {"role": "assistant", "markdown": "visible assistant B"},
+            ],
+        }
+        page = FakeConversationPage([sample])
+        chat = ProjectChat("chat", page.url, "Branched")
+
+        snapshot = read_conversation(page, chat, stable_rounds=1, poll_ms=0)
+
+        self.assertEqual(snapshot.qa_pairs[0].user, "visible user A prime")
+        self.assertNotIn("hidden user A", snapshot.qa_pairs[0].user)
+        self.assertIn("[hidden]", page.evaluate_arguments[0]["exclusions"])
+
+    @patch("cli_gpt.project.generation_in_progress", return_value=False)
+    @patch("cli_gpt.project.login_or_challenge_visible", return_value=False)
+    def test_branch_controls_are_not_in_assistant_markdown(
+        self, _login, _generating
+    ):
+        sample = {
+            "recognized": True,
+            "explicitEmpty": False,
+            "title": "Branched",
+            "turnCount": 2,
+            "invalidTurns": 0,
+            "messages": [
+                {"role": "user", "markdown": "Question"},
+                {"role": "assistant", "markdown": "Answer text"},
+            ],
+        }
+        page = FakeConversationPage([sample])
+        chat = ProjectChat("chat", page.url, "Branched")
+
+        snapshot = read_conversation(page, chat, stable_rounds=1, poll_ms=0)
+
+        answer = snapshot.qa_pairs[0].assistant
+        self.assertEqual(answer, "Answer text")
+        self.assertNotIn("1 / 2", answer)
+        self.assertIn(
+            '[data-testid*="branch" i]', page.evaluate_arguments[0]["exclusions"]
+        )
+
+    @patch("cli_gpt.project.generation_in_progress", return_value=False)
+    @patch("cli_gpt.project.login_or_challenge_visible", return_value=False)
+    def test_delayed_conversation_turns_do_not_stabilize_as_empty(
+        self, _login, _generating
+    ):
+        loading = {
+            "recognized": False,
+            "explicitEmpty": False,
+            "title": "",
+            "turnCount": 0,
+            "invalidTurns": 0,
+            "messages": [],
+        }
+        ready = {
+            "recognized": True,
+            "explicitEmpty": False,
+            "title": "Conversation",
+            "turnCount": 2,
+            "invalidTurns": 0,
+            "messages": [
+                {"role": "user", "markdown": "Question"},
+                {"role": "assistant", "markdown": "Answer"},
+            ],
+        }
+        page = FakeConversationPage([loading, loading, ready, ready])
+        chat = ProjectChat("chat", page.url, "Conversation")
+
+        snapshot = read_conversation(page, chat, max_rounds=4, poll_ms=0)
+
+        self.assertEqual(len(snapshot.qa_pairs), 1)
+        self.assertEqual(page.sample_index, 4)
+        self.assertEqual(page.waits, [0, 0, 0])
+
     def test_explicit_pairing_ignores_only_a_trailing_user(self):
         pairs = pair_messages(
             [
@@ -276,8 +441,28 @@ class ProjectDomTests(unittest.TestCase):
                 [
                     {"role": "user", "markdown": "one"},
                     {"role": "user", "markdown": "two"},
+                    {"role": "assistant", "markdown": "answer"},
                 ]
             )
+
+    @patch("cli_gpt.project.generation_in_progress", return_value=False)
+    @patch("cli_gpt.project.login_or_challenge_visible", return_value=False)
+    def test_ambiguous_primary_role_in_one_turn_is_rejected(
+        self, _login, _generating
+    ):
+        sample = {
+            "recognized": True,
+            "explicitEmpty": False,
+            "title": "Ambiguous",
+            "turnCount": 1,
+            "invalidTurns": 1,
+            "messages": [],
+        }
+        page = FakeConversationPage([sample])
+        chat = ProjectChat("chat", page.url, "Ambiguous")
+
+        with self.assertRaises(PageStructureChanged):
+            read_conversation(page, chat, stable_rounds=1, poll_ms=0)
 
     @patch("cli_gpt.project._conversation_sample")
     @patch("cli_gpt.project.generation_in_progress", return_value=True)

@@ -55,17 +55,31 @@ CONVERSATION_EMPTY_STATES = (
     '[data-testid="conversation-empty-state"]',
     '[data-testid*="empty-conversation" i]',
 )
-MESSAGE_ROOTS = (
+CONVERSATION_ROOTS = (
+    'main [data-testid="conversation"]',
+    'main [data-testid*="conversation" i]',
+    "main",
+)
+CONVERSATION_TURNS = (
+    'article[data-testid^="conversation-turn"]',
+    '[data-testid^="conversation-turn"]',
+)
+MESSAGE_ROLE_NODES = (
     '[data-message-author-role="user"]',
     '[data-message-author-role="assistant"]',
-    'article[data-testid^="conversation-turn"] [data-message-author-role]',
 )
 MESSAGE_UI_EXCLUSIONS = (
     "button",
     "svg",
+    "[hidden]",
+    "[inert]",
     '[data-testid*="copy" i]',
     '[data-testid*="feedback" i]',
     '[data-testid*="reaction" i]',
+    '[data-testid*="branch" i]',
+    '[aria-label*="branch" i]',
+    '[aria-label*="previous response" i]',
+    '[aria-label*="next response" i]',
     '[aria-hidden="true"]',
 )
 PROJECT_ACCESS_ERROR_NAME = re.compile(

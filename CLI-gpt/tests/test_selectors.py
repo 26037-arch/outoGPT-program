@@ -2,6 +2,9 @@ import unittest
 
 from cli_gpt.errors import PromptBoxNotFound
 from cli_gpt.selectors import (
+    CONVERSATION_ROOTS,
+    CONVERSATION_TURNS,
+    MESSAGE_ROLE_NODES,
     PROJECT_CONVERSATION_REGIONS,
     PROJECT_NAMES,
     PROJECT_SPECIFIC_CONVERSATION_REGIONS,
@@ -51,6 +54,20 @@ class FakePage:
 
 
 class SelectorTests(unittest.TestCase):
+    def test_conversation_selectors_are_root_then_turn_scoped(self):
+        self.assertIn("main", CONVERSATION_ROOTS)
+        self.assertNotIn("body", CONVERSATION_ROOTS)
+        self.assertIn(
+            'article[data-testid^="conversation-turn"]', CONVERSATION_TURNS
+        )
+        self.assertEqual(
+            set(MESSAGE_ROLE_NODES),
+            {
+                '[data-message-author-role="user"]',
+                '[data-message-author-role="assistant"]',
+            },
+        )
+
     def test_generic_main_is_only_a_fallback_project_region(self):
         self.assertIn("main", PROJECT_CONVERSATION_REGIONS)
         self.assertNotIn("main", PROJECT_SPECIFIC_CONVERSATION_REGIONS)
