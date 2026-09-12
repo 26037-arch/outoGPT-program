@@ -26,6 +26,8 @@ from .selectors import (
     PROJECT_EMPTY_NAME,
     PROJECT_EMPTY_STATES,
     PROJECT_NAMES,
+    PROJECT_SPECIFIC_CONVERSATION_REGIONS,
+    PROJECT_SPECIFIC_NAMES,
     login_or_challenge_visible,
     project_access_error_visible,
 )
@@ -108,7 +110,7 @@ def extract_chat_id(url: str) -> str:
 
 
 _PROJECT_SAMPLE_SCRIPT = r"""
-({ regions, links, names, emptySelectors, emptyPattern }) => {
+({ regions, specificRegions, links, names, specificNames, emptySelectors, emptyPattern }) => {
   // OUTOGPT_PROJECT_DISCOVERY
   const visible = (element) => {
     if (!element) return false;
@@ -125,19 +127,24 @@ _PROJECT_SAMPLE_SCRIPT = r"""
     return [...new Set(output)];
   };
   const candidates = all(document, regions).filter(visible);
+  const specificCandidates = all(document, specificRegions).filter(visible);
   const region = candidates.find((node) => all(node, links).length > 0)
     || candidates[0] || null;
+  const specificRegion = specificCandidates.find((node) => all(node, links).length > 0)
+    || specificCandidates[0] || null;
   const anchors = region ? all(region, links) : [];
   const chats = anchors.map((anchor) => ({
     href: anchor.href || anchor.getAttribute("href") || "",
     title: (anchor.getAttribute("aria-label") || anchor.textContent || "").trim()
   })).filter((chat) => chat.href);
   const nameNode = all(document, names).find(visible) || null;
+  const specificNameNode = all(document, specificNames).find(visible) || null;
   let name = (nameNode?.textContent || "").trim();
   if (!name) name = String(document.title || "").replace(/\s*[|\-]\s*ChatGPT\s*$/i, "").trim();
   const explicitEmpty = all(document, emptySelectors).some(visible)
     || (region && new RegExp(emptyPattern, "i").test(region.textContent || ""));
-  return { recognized: Boolean(region), name, chats, explicitEmpty };
+  const recognized = Boolean(specificRegion || specificNameNode || chats.length || explicitEmpty);
+  return { recognized, ready: Boolean(recognized && name), name, chats, explicitEmpty };
 }
 """
 
@@ -177,8 +184,10 @@ def _project_sample(page: Any) -> Mapping[str, Any]:
         _PROJECT_SAMPLE_SCRIPT,
         {
             "regions": list(PROJECT_CONVERSATION_REGIONS),
+            "specificRegions": list(PROJECT_SPECIFIC_CONVERSATION_REGIONS),
             "links": list(PROJECT_CHAT_LINKS),
             "names": list(PROJECT_NAMES),
+            "specificNames": list(PROJECT_SPECIFIC_NAMES),
             "emptySelectors": list(PROJECT_EMPTY_STATES),
             "emptyPattern": PROJECT_EMPTY_NAME.pattern,
         },
@@ -191,6 +200,35 @@ def _scroll_project_region(page: Any) -> bool:
     )
 
 
+def _project_ui_ready(sample: Mapping[str, Any]) -> bool:
+    """Return whether a sample contains strong, named project UI evidence."""
+    project_name = str(sample.get("name") or "").strip()
+    readiness = sample.get("ready")
+    if readiness is None:
+        readiness = sample.get("recognized")
+    return bool(readiness and project_name)
+
+
+def _check_project_page_state(page: Any, project_id: str, project_url: str) -> None:
+    """Keep authentication, access, and redirect checks active while polling."""
+    if login_or_challenge_visible(page) or "/auth/" in getattr(page, "url", ""):
+        raise LoginRequired("ChatGPT authentication is required to read the project.")
+    if project_access_error_visible(page):
+        raise ProjectAccessFailed(
+            "The ChatGPT project is inaccessible to this account."
+        )
+    try:
+        current_project_id = extract_project_id(getattr(page, "url", project_url))
+    except InvalidProjectUrl as exc:
+        raise ProjectAccessFailed(
+            "ChatGPT redirected away from the requested project."
+        ) from exc
+    if current_project_id != project_id:
+        raise ProjectAccessFailed(
+            "ChatGPT redirected away from the requested project."
+        )
+
+
 def discover_project_chats(
     page: Any,
     project_url: str,
@@ -199,7 +237,7 @@ def discover_project_chats(
     max_rounds: int = 80,
     poll_ms: int = DOM_POLL_MS,
 ) -> ProjectDiscovery:
-    """Discover all project chat links using bounded DOM stabilization."""
+    """Wait for project readiness, then discover links using bounded stabilization."""
     project_url = validate_project_url(project_url)
     project_id = extract_project_id(project_url)
     try:
@@ -208,12 +246,21 @@ def discover_project_chats(
         )
     except Exception as exc:
         raise ProjectAccessFailed(f"Could not open the ChatGPT project: {exc}") from exc
-    if project_access_error_visible(page):
-        raise ProjectAccessFailed(
-            "The ChatGPT project is inaccessible to this account."
+    _check_project_page_state(page, project_id, project_url)
+
+    ready_sample: Mapping[str, Any] | None = None
+    for round_index in range(max_rounds):
+        _check_project_page_state(page, project_id, project_url)
+        sample = _project_sample(page)
+        if _project_ui_ready(sample):
+            ready_sample = sample
+            break
+        if round_index + 1 < max_rounds:
+            page.wait_for_timeout(poll_ms)
+    if ready_sample is None:
+        raise PageStructureChanged(
+            "Could not recognize the ChatGPT project conversation list and name."
         )
-    if login_or_challenge_visible(page) or "/auth/" in getattr(page, "url", ""):
-        raise LoginRequired("ChatGPT authentication is required to read the project.")
 
     discovered: dict[str, ProjectChat] = {}
     stable = 0
@@ -221,24 +268,10 @@ def discover_project_chats(
     explicit_empty = False
     project_name = ""
     stabilized = False
-    for _ in range(max_rounds):
-        if login_or_challenge_visible(page) or "/auth/" in getattr(page, "url", ""):
-            raise LoginRequired("ChatGPT authentication is required to read the project.")
-        if project_access_error_visible(page):
-            raise ProjectAccessFailed(
-                "The ChatGPT project is inaccessible to this account."
-            )
-        try:
-            current_project_id = extract_project_id(getattr(page, "url", project_url))
-        except InvalidProjectUrl as exc:
-            raise ProjectAccessFailed(
-                "ChatGPT redirected away from the requested project."
-            ) from exc
-        if current_project_id != project_id:
-            raise ProjectAccessFailed(
-                "ChatGPT redirected away from the requested project."
-            )
-        sample = _project_sample(page)
+    sample = ready_sample
+    for round_index in range(max_rounds):
+        _check_project_page_state(page, project_id, project_url)
+        sample_ready = _project_ui_ready(sample)
         recognized = recognized or bool(sample.get("recognized"))
         explicit_empty = explicit_empty or bool(sample.get("explicitEmpty"))
         candidate_name = str(sample.get("name") or "").strip()
@@ -260,12 +293,17 @@ def discover_project_chats(
             title = str(item.get("title") or "").strip() or "Untitled conversation"
             discovered[chat_id] = ProjectChat(chat_id, chat_url, title)
 
-        stable = stable + 1 if len(discovered) == before else 0
+        if sample_ready and (discovered or explicit_empty):
+            stable = stable + 1 if len(discovered) == before else 0
+        else:
+            stable = 0
         moved = _scroll_project_region(page)
         if stable >= stable_rounds and not moved:
             stabilized = True
             break
-        page.wait_for_timeout(poll_ms)
+        if round_index + 1 < max_rounds:
+            page.wait_for_timeout(poll_ms)
+            sample = _project_sample(page)
 
     if not stabilized:
         raise PageStructureChanged(

@@ -1,7 +1,13 @@
 import unittest
 
 from cli_gpt.errors import PromptBoxNotFound
-from cli_gpt.selectors import find_prompt_box
+from cli_gpt.selectors import (
+    PROJECT_CONVERSATION_REGIONS,
+    PROJECT_NAMES,
+    PROJECT_SPECIFIC_CONVERSATION_REGIONS,
+    PROJECT_SPECIFIC_NAMES,
+    find_prompt_box,
+)
 
 
 class FakeElement:
@@ -45,6 +51,12 @@ class FakePage:
 
 
 class SelectorTests(unittest.TestCase):
+    def test_generic_main_is_only_a_fallback_project_region(self):
+        self.assertIn("main", PROJECT_CONVERSATION_REGIONS)
+        self.assertNotIn("main", PROJECT_SPECIFIC_CONVERSATION_REGIONS)
+        self.assertIn("main h1", PROJECT_NAMES)
+        self.assertNotIn("main h1", PROJECT_SPECIFIC_NAMES)
+
     def test_falls_back_to_prompt_id(self):
         hidden_role = FakeElement("role", visible=False)
         fallback = FakeElement("prompt-id")
@@ -72,4 +84,3 @@ class SelectorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

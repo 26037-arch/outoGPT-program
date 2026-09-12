@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from cli_gpt.errors import LoginRequired, PageStructureChanged
+from cli_gpt.errors import LoginRequired, PageStructureChanged, ProjectAccessFailed
 from cli_gpt.project import (
     ProjectChat,
     discover_project_chats,
@@ -67,6 +67,61 @@ class ProjectDomTests(unittest.TestCase):
 
     @patch("cli_gpt.project.project_access_error_visible", return_value=False)
     @patch("cli_gpt.project.login_or_challenge_visible", return_value=False)
+    def test_delayed_project_dom_waits_for_readiness_before_discovery(
+        self, _login, _access
+    ):
+        loading = {
+            "recognized": False,
+            "name": "",
+            "explicitEmpty": False,
+            "chats": [],
+        }
+        ready = {
+            "recognized": True,
+            "name": "Test Project",
+            "explicitEmpty": False,
+            "chats": [{"href": "/g/g-p-project/c/a", "title": "A"}],
+        }
+        page = FakeProjectPage([loading, loading, ready, ready])
+
+        result = discover_project_chats(
+            page, PROJECT_URL, stable_rounds=1, max_rounds=4, poll_ms=0
+        )
+
+        self.assertEqual(result.project_name, "Test Project")
+        self.assertEqual([chat.chat_id for chat in result.chats], ["a"])
+
+    @patch("cli_gpt.project.project_access_error_visible", return_value=False)
+    @patch("cli_gpt.project.login_or_challenge_visible", return_value=False)
+    def test_three_zero_chat_loading_rounds_do_not_end_stabilization(
+        self, _login, _access
+    ):
+        loading = {
+            "recognized": True,
+            "name": "Test Project",
+            "explicitEmpty": False,
+            "chats": [],
+        }
+        ready = {
+            "recognized": True,
+            "name": "Test Project",
+            "explicitEmpty": False,
+            "chats": [
+                {"href": f"/g/g-p-project/c/{chat_id}", "title": chat_id.upper()}
+                for chat_id in ("a", "b", "c")
+            ],
+        }
+        page = FakeProjectPage([loading, loading, loading, ready, ready])
+
+        result = discover_project_chats(
+            page, PROJECT_URL, stable_rounds=1, max_rounds=5, poll_ms=0
+        )
+
+        self.assertEqual(len(result.chats), 3)
+        self.assertGreaterEqual(page.sample_index, 5)
+
+    @patch("cli_gpt.project.project_access_error_visible", return_value=False)
+    @patch("cli_gpt.project.login_or_challenge_visible", return_value=False)
     def test_unrecognized_empty_result_is_a_structure_error(self, _login, _access):
         page = FakeProjectPage(
             [
@@ -99,6 +154,86 @@ class ProjectDomTests(unittest.TestCase):
         )
         self.assertEqual(result.project_name, "Empty Project")
         self.assertEqual(result.chats, ())
+
+    @patch("cli_gpt.project.project_access_error_visible", return_value=False)
+    @patch("cli_gpt.project.login_or_challenge_visible", return_value=False)
+    def test_never_recognized_project_is_a_structure_error(self, _login, _access):
+        page = FakeProjectPage(
+            [
+                {
+                    "recognized": False,
+                    "name": "",
+                    "explicitEmpty": False,
+                    "chats": [],
+                }
+            ]
+        )
+
+        with self.assertRaises(PageStructureChanged):
+            discover_project_chats(page, PROJECT_URL, max_rounds=3, poll_ms=0)
+
+    @patch("cli_gpt.project.project_access_error_visible", return_value=False)
+    @patch(
+        "cli_gpt.project.login_or_challenge_visible",
+        side_effect=[False, False, True],
+    )
+    def test_login_during_readiness_polling_is_reported(self, _login, _access):
+        page = FakeProjectPage(
+            [
+                {
+                    "recognized": False,
+                    "name": "",
+                    "explicitEmpty": False,
+                    "chats": [],
+                }
+            ]
+        )
+
+        with self.assertRaises(LoginRequired):
+            discover_project_chats(page, PROJECT_URL, max_rounds=3, poll_ms=0)
+
+    @patch("cli_gpt.project.project_access_error_visible", return_value=False)
+    @patch("cli_gpt.project.login_or_challenge_visible", return_value=False)
+    def test_redirect_during_readiness_polling_is_reported(self, _login, _access):
+        loading = {
+            "recognized": False,
+            "name": "",
+            "explicitEmpty": False,
+            "chats": [],
+        }
+        page = FakeProjectPage([loading])
+        original_wait = page.wait_for_timeout
+
+        def redirect_after_wait(milliseconds):
+            original_wait(milliseconds)
+            page.url = "https://chatgpt.com/g/g-p-other/project"
+
+        page.wait_for_timeout = redirect_after_wait
+
+        with self.assertRaises(ProjectAccessFailed):
+            discover_project_chats(page, PROJECT_URL, max_rounds=3, poll_ms=0)
+
+    @patch("cli_gpt.project.project_access_error_visible", return_value=False)
+    @patch("cli_gpt.project.login_or_challenge_visible", return_value=False)
+    def test_ready_project_reuses_first_sample_without_readiness_wait(
+        self, _login, _access
+    ):
+        ready = {
+            "recognized": True,
+            "name": "Ready Project",
+            "explicitEmpty": False,
+            "chats": [{"href": "/g/g-p-project/c/a", "title": "A"}],
+        }
+        page = FakeProjectPage([ready, ready])
+
+        result = discover_project_chats(
+            page, PROJECT_URL, stable_rounds=1, max_rounds=2, poll_ms=0
+        )
+
+        self.assertEqual(result.project_name, "Ready Project")
+        self.assertEqual([chat.chat_id for chat in result.chats], ["a"])
+        self.assertEqual(page.sample_index, 2)
+        self.assertEqual(page.waits, [0])
 
     @patch("cli_gpt.project.project_access_error_visible", return_value=False)
     @patch("cli_gpt.project.login_or_challenge_visible", return_value=False)

@@ -19,16 +19,22 @@ LOGIN_NAME = re.compile(r"log ?in|sign ?in|로그인", re.IGNORECASE)
 # Project-reading selectors stay in this single module so UI repairs do not leak
 # into discovery, storage, or controller code. Links are additionally validated
 # against the requested project id before they are accepted.
-PROJECT_CONVERSATION_REGIONS = (
+PROJECT_SPECIFIC_CONVERSATION_REGIONS = (
     '[data-testid="project-conversations"]',
     '[data-testid*="project" i][data-testid*="conversation" i]',
+)
+PROJECT_CONVERSATION_REGIONS = (
+    *PROJECT_SPECIFIC_CONVERSATION_REGIONS,
     'main [role="list"]',
     "main",
 )
 PROJECT_CHAT_LINKS = ('a[href*="/c/"]',)
-PROJECT_NAMES = (
+PROJECT_SPECIFIC_NAMES = (
     '[data-testid="project-name"]',
     '[aria-label*="Project" i] h1',
+)
+PROJECT_NAMES = (
+    *PROJECT_SPECIFIC_NAMES,
     "main h1",
 )
 PROJECT_EMPTY_STATES = (
