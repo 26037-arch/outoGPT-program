@@ -4,9 +4,34 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from cli_gpt.browser import BrowserProfileLock
+import psutil
+
+from cli_gpt.browser import BrowserProfileLock, _process_is_alive
 from cli_gpt.errors import ChromeProfileInUse
+
+
+class ProcessAliveTests(unittest.TestCase):
+    @patch("cli_gpt.browser.psutil.pid_exists")
+    def test_non_positive_pid_is_rejected_without_a_system_call(self, pid_exists):
+        self.assertFalse(_process_is_alive(0))
+        self.assertFalse(_process_is_alive(-1))
+        pid_exists.assert_not_called()
+
+    @patch("cli_gpt.browser.psutil.pid_exists", side_effect=[True, False])
+    def test_pid_exists_result_is_used_directly(self, pid_exists):
+        self.assertTrue(_process_is_alive(1234))
+        self.assertFalse(_process_is_alive(5678))
+        self.assertEqual(
+            [call.args[0] for call in pid_exists.call_args_list], [1234, 5678]
+        )
+
+    def test_pid_lookup_errors_are_treated_as_not_alive(self):
+        for error in (psutil.Error(), OSError(), ValueError()):
+            with self.subTest(error=type(error).__name__):
+                with patch("cli_gpt.browser.psutil.pid_exists", side_effect=error):
+                    self.assertFalse(_process_is_alive(1234))
 
 
 class BrowserProfileLockTests(unittest.TestCase):
