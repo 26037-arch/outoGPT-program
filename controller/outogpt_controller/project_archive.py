@@ -39,12 +39,20 @@ def sanitize_component(value: str, fallback: str) -> str:
 
 def _atomic_text(path: Path, contents: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if path.is_file() and path.read_text(encoding="utf-8") == contents:
+            return
+    except (OSError, UnicodeError):
+        # The verified replacement below reports any durable read/write failure.
+        pass
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     try:
         with temporary.open("x", encoding="utf-8", newline="\n") as stream:
             stream.write(contents)
             stream.flush()
             os.fsync(stream.fileno())
+        if temporary.read_text(encoding="utf-8") != contents:
+            raise OSError(f"Temporary-file verification failed for {temporary}")
         os.replace(temporary, path)
     finally:
         try:
@@ -160,6 +168,8 @@ class ProjectArchive:
         project_url: str,
     ) -> "ProjectArchive":
         root = Path(root).expanduser()
+        if root.exists() and not root.is_dir():
+            raise ProjectStateError(f"Archive root is not a directory: {root}")
         if not re.fullmatch(r"g-p-[A-Za-z0-9_-]{1,128}", project_id):
             raise ProjectStateError("Refusing to use an unsafe project id.")
         desired_name = sanitize_component(project_name, project_id)
@@ -279,16 +289,28 @@ class ProjectArchive:
             )
         payload = self._render_pairs(pairs, start)
         try:
-            with path.open("a", encoding="utf-8", newline="\n") as stream:
-                stream.write(payload)
-                stream.flush()
-                os.fsync(stream.fileno())
-        except OSError as exc:
-            try:
-                self.recover_completed_qa_count(chat_id)
-            except MarkdownArchiveError:
-                pass
-            raise MarkdownArchiveError(f"Could not append to {path}: {exc}") from exc
+            existing = path.read_text(encoding="utf-8")
+            candidate = existing + payload
+            markers = [int(match.group(1)) for match in _QA_END.finditer(candidate)]
+            expected = list(range(1, physical_count + len(pairs) + 1))
+            if markers != expected:
+                raise MarkdownArchiveError(
+                    f"Rendered QA completion markers are inconsistent for {path}."
+                )
+            _atomic_text(path, candidate)
+            verified = self.completed_qa_count(
+                chat_id, minimum_expected=physical_count + len(pairs)
+            )
+            if verified != physical_count + len(pairs):
+                raise MarkdownArchiveError(
+                    f"Committed Markdown verification failed for {path}."
+                )
+        except MarkdownArchiveError:
+            raise
+        except (OSError, UnicodeError) as exc:
+            raise MarkdownArchiveError(
+                f"Could not atomically update {path}: {exc}"
+            ) from exc
 
     def recover_completed_qa_count(
         self, chat_id: str, *, minimum_expected: int = 0

@@ -1,7 +1,9 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from cli_gpt.errors import PageStructureChanged
 from cli_gpt.project import (
@@ -32,9 +34,10 @@ def conversation(chat_id, count, *, title=None, generating=False):
 
 
 class FakeBrowser:
-    def __init__(self, snapshots, *, discovery_error=None):
+    def __init__(self, snapshots, *, discovery_error=None, discovery_complete=True):
         self.snapshots = snapshots
         self.discovery_error = discovery_error
+        self.discovery_complete = discovery_complete
         self.read_ids = []
 
     def discover_project_chats(self, project_url):
@@ -52,7 +55,14 @@ class FakeBrowser:
                 )
             else:
                 chats.append(ProjectChat(chat_id, snapshot.chat_url, snapshot.title))
-        return ProjectDiscovery("g-p-project", project_url, "테스트 프로젝트", chats)
+        return ProjectDiscovery(
+            "g-p-project",
+            project_url,
+            "테스트 프로젝트",
+            tuple(chats),
+            self.discovery_complete,
+            None if self.discovery_complete else "bounded traversal remained partial",
+        )
 
     def read_project_chat(self, chat):
         self.read_ids.append(chat.chat_id)
@@ -103,12 +113,15 @@ class ProjectUpdaterTests(unittest.TestCase):
         self.update({"a": conversation("a", 2)})
         _, directory = self.state()
         path = directory / "chats" / "a.md"
+        index_path = directory / "index.md"
+        os.utime(index_path, (1, 1))
         original = path.read_text(encoding="utf-8")
         first = self.update({"a": conversation("a", 2)})
         second = self.update({"a": conversation("a", 2)})
         self.assertEqual(first.unchanged_chats, 1)
         self.assertEqual(second.qa_pairs_appended, 0)
         self.assertEqual(path.read_text(encoding="utf-8"), original)
+        self.assertEqual(index_path.stat().st_mtime_ns, 1_000_000_000)
 
     def test_one_and_multiple_new_qa_pairs_are_appended_once(self):
         self.update({"a": conversation("a", 1)})
@@ -198,6 +211,58 @@ class ProjectUpdaterTests(unittest.TestCase):
         self.assertEqual(result.qa_pairs_appended, 0)
         self.assertEqual(state["chats"]["a"]["qa_count"], 2)
         self.assertEqual(markdown.count("## Q"), 2)
+
+    def test_atomic_replace_failure_preserves_prior_markdown_and_success_counters(self):
+        self.update({"a": conversation("a", 1)})
+        _, directory = self.state()
+        path = directory / "chats" / "a.md"
+        original = path.read_bytes()
+
+        with patch(
+            "outogpt_controller.project_archive.os.replace",
+            side_effect=OSError("simulated replace failure"),
+        ):
+            result = self.update({"a": conversation("a", 2)})
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.updated_chats, 0)
+        self.assertEqual(result.saved_chats, 0)
+        self.assertEqual(result.qa_pairs_appended, 0)
+        self.assertEqual(result.failed_chats, 1)
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_partial_discovery_saves_independent_chats_but_reports_incomplete(self):
+        browser = FakeBrowser(
+            {"good": conversation("good", 1)}, discovery_complete=False
+        )
+        result = ProjectUpdater(browser, self.root).update(PROJECT_URL)
+        state, _ = self.state()
+        self.assertFalse(result.ok)
+        self.assertFalse(result.discovery_complete)
+        self.assertEqual(result.discovered_chats, 1)
+        self.assertEqual(result.saved_chats, 1)
+        self.assertEqual(result.new_chats, 1)
+        self.assertIn("good", state["chats"])
+        self.assertEqual(result.errors[0]["code"], "PROJECT_DISCOVERY_INCOMPLETE")
+
+    def test_unknown_loading_is_pending_not_failed_or_saved(self):
+        unknown = ConversationSnapshot(
+            "pending",
+            "https://chatgpt.com/g/g-p-project/c/pending",
+            "Pending",
+            (),
+            False,
+            "unknown",
+            "still loading",
+        )
+        result = self.update({"pending": unknown, "good": conversation("good", 1)})
+        state, _ = self.state()
+        self.assertFalse(result.ok)
+        self.assertEqual(result.pending_unknown_loading_chats, 1)
+        self.assertEqual(result.failed_chats, 0)
+        self.assertEqual(result.saved_chats, 1)
+        self.assertNotIn("pending", state["chats"])
+        self.assertEqual(result.errors[0]["stage"], "readiness")
 
     def test_orphan_markdown_from_failed_state_write_is_recovered_without_overwrite(self):
         self.update({"a": conversation("a", 2)})
@@ -311,6 +376,10 @@ class ProjectUpdaterTests(unittest.TestCase):
         state, _ = self.state()
         self.assertFalse(result.ok)
         self.assertEqual(result.new_chats, 1)
+        self.assertEqual(result.saved_chats, 1)
+        self.assertEqual(result.failed_chats, 1)
+        self.assertEqual(result.qa_pairs_appended, 1)
+        self.assertEqual(result.errors[0]["stage"], "extraction")
         self.assertIn("good", state["chats"])
         self.assertNotIn("bad", state["chats"])
 

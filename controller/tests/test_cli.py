@@ -163,6 +163,27 @@ class CliTests(unittest.TestCase):
             "https://chatgpt.com/g/g-p-saved/project",
         )
 
+    def test_project_update_uses_saved_unicode_archive_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            configured = Path(directory) / "OneDrive 보관 폴더"
+            with patch(
+                "outogpt_controller.cli.load_archive_root", return_value=configured
+            ):
+                code, stdout, stderr = self.run_cli(
+                    [
+                        "project",
+                        "update",
+                        "--project-url",
+                        "https://chatgpt.com/g/g-p-demo/project",
+                        "--json",
+                    ]
+                )
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        payload = json.loads(stdout)
+        self.assertEqual(payload["archive_root_source"], "config")
+        self.assertEqual(Path(payload["archive_root"]), configured.resolve())
+
     def test_project_update_without_saved_url_is_invalid_argument(self):
         with patch(
             "outogpt_controller.cli.load_project_url",

@@ -52,6 +52,7 @@ Run:
 
 ```powershell
 outogpt setup
+outogpt setup --archive-root "D:\OneDrive\ChatGPT archive"
 ```
 
 This opens ordinary Google Chrome with the dedicated OutoGPT profile. Before you
@@ -126,15 +127,19 @@ outogpt project update --archive-root "D:\ChatGPT archive"
 ```
 
 When `--project-url` is omitted, the command uses the Project URL saved by
-`outogpt setup --project-url ...`. The default archive root is
-`~/.outogpt/ChatGPT/`. Each project directory contains `project.json`, `index.md`,
+`outogpt setup --project-url ...`. Archive-root precedence is an explicit
+`project update --archive-root`, the root saved by `setup --archive-root`,
+`OUTOGPT_ARCHIVE_ROOT`, then `~/.outogpt/ChatGPT/`. The folder selected in the
+Chrome extension is a browser File System Access handle and is separate because its
+absolute OS path is not exposed to the controller. Each project directory contains `project.json`, `index.md`,
 and one `chats/<chat-id>.md` file per archived conversation. Project and chat IDs,
 not mutable titles, are used to recover existing archives and filenames safely.
 
 Updates are append-only at the completed QA-pair level. A pair is exactly one user
-message followed by one assistant message. Only newly completed pairs are appended,
+message followed by one or more assistant message segments. Only newly completed pairs are added,
 and completion markers prevent duplicate appends after an interrupted state write.
-Repeated runs therefore do not duplicate content. If ChatGPT reports fewer complete
+Changed Markdown is written to a verified temporary file and atomically replaces the
+target. Repeated runs therefore do not duplicate content. If ChatGPT reports fewer complete
 pairs than the archive already contains, the older archive is preserved unchanged.
 
 Chats that are still generating increment `skipped_generating_chats` in the result

@@ -4,13 +4,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import traceback
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from cli_gpt.config import load_project_url, save_project_url, validate_project_url
+from cli_gpt.config import (
+    load_archive_root,
+    load_project_url,
+    save_archive_root,
+    save_project_url,
+    validate_project_url,
+)
 from cli_gpt.errors import InvalidProjectUrl
 from cli_gpt.setup import interactive_setup
 
@@ -44,6 +51,11 @@ def build_parser() -> argparse.ArgumentParser:
     groups = parser.add_subparsers(dest="group", required=True)
     setup = groups.add_parser("setup", help="Prepare the dedicated Chrome profile.")
     setup.add_argument("--project-url")
+    setup.add_argument(
+        "--archive-root",
+        type=Path,
+        help="Save the controller archive root used by project update.",
+    )
 
     chat = groups.add_parser("chat")
     commands = chat.add_subparsers(dest="command", required=True)
@@ -72,8 +84,8 @@ def build_parser() -> argparse.ArgumentParser:
     update.add_argument(
         "--archive-root",
         type=Path,
-        default=DEFAULT_ARCHIVE_ROOT,
-        help="Root directory for per-project Markdown archives.",
+        default=None,
+        help="Root directory for per-project Markdown archives (overrides saved configuration).",
     )
     _add_output_option(update)
     return parser
@@ -99,11 +111,14 @@ def _write(payload: dict[str, Any], as_json: bool) -> None:
         print(f"project_name: {payload.get('project_name', '')}")
         for key in (
             "discovered_chats",
+            "saved_chats",
             "new_chats",
             "updated_chats",
             "unchanged_chats",
             "skipped_generating_chats",
             "skipped_empty_chats",
+            "pending_unknown_loading_chats",
+            "failed_chats",
             "qa_pairs_appended",
         ):
             print(f"{key}: {payload.get(key, 0)}")
@@ -147,6 +162,8 @@ def main(
             interactive_setup(extension_path=EXTENSION_DIR)
             if project_url:
                 save_project_url(project_url)
+            if args.archive_root is not None:
+                save_archive_root(args.archive_root)
             print("OutoGPT Chrome setup completed.")
             return 0
 
@@ -161,9 +178,40 @@ def main(
                     raise InvalidArgumentError(
                         "--project-url is required until setup has saved a project URL."
                     ) from exc
-            payload = controller.update_project(
-                project_url, archive_root=args.archive_root
-            ).to_dict()
+            if args.archive_root is not None:
+                archive_root = args.archive_root.expanduser().resolve(strict=False)
+                archive_source = "cli"
+            else:
+                configured_root = load_archive_root()
+                if configured_root is not None:
+                    archive_root = configured_root.resolve(strict=False)
+                    archive_source = "config"
+                elif os.environ.get("OUTOGPT_ARCHIVE_ROOT"):
+                    archive_root = Path(os.environ["OUTOGPT_ARCHIVE_ROOT"]).expanduser().resolve(strict=False)
+                    archive_source = "environment"
+                else:
+                    archive_root = DEFAULT_ARCHIVE_ROOT
+                    archive_source = "default"
+            if archive_root.exists() and not archive_root.is_dir():
+                raise InvalidArgumentError(
+                    f"Archive root is not a directory: {archive_root}"
+                )
+            if args.debug:
+                print(
+                    f"archive_root_source={archive_source} archive_root={archive_root}",
+                    file=sys.stderr,
+                )
+            update_result = controller.update_project(
+                project_url, archive_root=archive_root
+            )
+            update_result.archive_root = str(archive_root)
+            update_result.archive_root_source = archive_source
+            payload = update_result.to_dict()
+            if args.debug and payload.get("archive_directory"):
+                print(
+                    f"archive_directory={payload['archive_directory']}",
+                    file=sys.stderr,
+                )
         elif args.command == "create":
             payload = controller.create_chat(args.project_url, _prompt(args)).to_dict()
         elif args.command == "send":

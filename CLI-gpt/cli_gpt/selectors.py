@@ -41,6 +41,20 @@ PROJECT_EMPTY_STATES = (
     '[data-testid*="empty" i]',
     '[data-testid*="no-conversation" i]',
 )
+PROJECT_LOADING_INDICATORS = (
+    '[data-testid*="project" i][data-testid*="loading" i]',
+    '[data-testid*="conversation" i][data-testid*="loading" i]',
+    '[aria-busy="true"]',
+    'main [role="progressbar"]',
+)
+PROJECT_END_INDICATORS = (
+    '[data-testid*="end-of" i][data-testid*="conversation" i]',
+    '[data-testid*="all-conversations" i]',
+)
+PROJECT_LOAD_MORE_CONTROLS = (
+    'button[data-testid*="load-more" i]',
+    'button[aria-label*="load more" i]',
+)
 PROJECT_EMPTY_NAME = re.compile(
     r"no (?:chats|conversations)|start (?:a |your )?(?:chat|conversation)"
     r"|대화가 없습니다|채팅이 없습니다|새 채팅",
@@ -55,6 +69,12 @@ CONVERSATION_EMPTY_STATES = (
     '[data-testid="conversation-empty-state"]',
     '[data-testid*="empty-conversation" i]',
 )
+CONVERSATION_LOADING_INDICATORS = (
+    '[data-testid*="conversation" i][data-testid*="loading" i]',
+    '[data-testid*="history" i][data-testid*="loading" i]',
+    'main [aria-busy="true"]',
+    'main [role="progressbar"]',
+)
 CONVERSATION_ROOTS = (
     'main [data-testid="conversation"]',
     'main [data-testid*="conversation" i]',
@@ -67,6 +87,13 @@ CONVERSATION_TURNS = (
 MESSAGE_ROLE_NODES = (
     '[data-message-author-role="user"]',
     '[data-message-author-role="assistant"]',
+)
+MESSAGE_AUXILIARY_NODES = (
+    '[data-message-author-role="tool"]',
+    '[data-message-author-role="system"]',
+    '[data-testid*="status" i]',
+    '[data-testid*="thinking" i]',
+    '[data-testid*="loading" i]',
 )
 MESSAGE_ATTACHMENT_NODES = (
     '[data-testid*="attachment" i]',
@@ -98,6 +125,7 @@ MESSAGE_UI_EXCLUSIONS = (
     '[aria-label*="previous response" i]',
     '[aria-label*="next response" i]',
     '[aria-hidden="true"]',
+    *MESSAGE_AUXILIARY_NODES,
 )
 PROJECT_ACCESS_ERROR_NAME = re.compile(
     r"not found|no access|do not have access|permission"

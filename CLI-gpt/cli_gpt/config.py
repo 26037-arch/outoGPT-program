@@ -70,13 +70,65 @@ def validate_chat_url(url: str) -> str:
 
 def save_project_url(url: str, path: Path = CONFIG_FILE) -> None:
     validated = validate_project_url(url)
+    try:
+        existing = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(existing, dict):
+            existing = {}
+    except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeError):
+        existing = {}
+    existing["project_url"] = validated
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(
-        json.dumps({"project_url": validated}, ensure_ascii=False, indent=2) + "\n",
+        json.dumps(existing, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
     os.replace(temporary, path)
+
+
+def save_archive_root(root: Path | str, path: Path = CONFIG_FILE) -> Path:
+    """Persist an explicitly selected controller archive root without losing setup data."""
+    candidate = Path(root).expanduser().resolve(strict=False)
+    if candidate.exists() and not candidate.is_dir():
+        raise InvalidProjectUrl(f"The archive root is not a directory: {candidate}")
+    try:
+        existing = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(existing, dict):
+            existing = {}
+    except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeError):
+        existing = {}
+    existing["archive_root"] = str(candidate)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(existing, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, path)
+    return candidate
+
+
+def load_archive_root(path: Path = CONFIG_FILE) -> Path | None:
+    """Return the controller archive root, if setup explicitly saved one."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (json.JSONDecodeError, OSError, UnicodeError, TypeError) as exc:
+        raise InvalidProjectUrl(
+            "The local configuration file is invalid. Run outogpt setup again."
+        ) from exc
+    value = raw.get("archive_root") if isinstance(raw, dict) else None
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise InvalidProjectUrl("The configured archive root is empty or invalid.")
+    candidate = Path(value).expanduser()
+    if candidate.exists() and not candidate.is_dir():
+        raise InvalidProjectUrl(
+            f"The configured archive root is not a directory: {candidate}"
+        )
+    return candidate
 
 
 def load_project_url(path: Path = CONFIG_FILE) -> str:

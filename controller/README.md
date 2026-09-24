@@ -44,12 +44,16 @@ outogpt project update --project-url "https://chatgpt.com/g/g-p-.../project"
 outogpt project update --archive-root "D:\ChatGPT archive" --json
 ```
 
-The Project URL may be omitted after it has been saved by setup. The default output
-is `~/.outogpt/ChatGPT/<sanitized-project-name>/`, containing `project.json`,
+The Project URL may be omitted after it has been saved by setup. Save a persistent
+controller destination with `outogpt setup --archive-root "D:\ChatGPT archive"`.
+Resolution order is the update command option, saved controller configuration,
+`OUTOGPT_ARCHIVE_ROOT`, then the default. The Chrome extension's folder picker is
+separate because its File System Access handle does not reveal an absolute OS path
+to Python. The default output is `~/.outogpt/ChatGPT/<sanitized-project-name>/`, containing `project.json`,
 `index.md`, and `chats/<chat-id>.md`. One browser session and one reusable page are
 used for the entire sequential update; no Chrome process is started per chat.
 
-Only complete user/assistant QA pairs are appended. Generating chats and trailing
+Only complete user/assistant QA pairs are persisted. Generating chats and trailing
 unanswered user messages are skipped without blocking other chats. Repeated updates
 are idempotent by completed-pair count. Content edits or regenerated answers with an
 unchanged pair count are intentionally outside this updater's detection model.

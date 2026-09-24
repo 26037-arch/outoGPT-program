@@ -10,25 +10,34 @@ from urllib.parse import urljoin, urlsplit
 from .chatgpt import generation_in_progress
 from .config import validate_chat_url, validate_project_url
 from .errors import (
+    ConversationHistoryIncomplete,
+    ConversationLoadingUnknown,
+    ConversationStructureError,
     InvalidChatUrl,
     InvalidProjectUrl,
     LoginRequired,
     PageStructureChanged,
     ProjectAccessFailed,
+    ProjectDiscoveryIncomplete,
 )
 from .selectors import (
     CONVERSATION_ROOTS,
     CONVERSATION_TITLES,
     CONVERSATION_EMPTY_STATES,
+    CONVERSATION_LOADING_INDICATORS,
     CONVERSATION_TURNS,
     MESSAGE_ATTACHMENT_IMAGES,
     MESSAGE_ATTACHMENT_NODES,
+    MESSAGE_AUXILIARY_NODES,
     MESSAGE_ROLE_NODES,
     MESSAGE_UI_EXCLUSIONS,
     PROJECT_CHAT_LINKS,
     PROJECT_CONVERSATION_REGIONS,
     PROJECT_EMPTY_NAME,
     PROJECT_EMPTY_STATES,
+    PROJECT_END_INDICATORS,
+    PROJECT_LOAD_MORE_CONTROLS,
+    PROJECT_LOADING_INDICATORS,
     PROJECT_NAMES,
     PROJECT_SPECIFIC_CONVERSATION_REGIONS,
     PROJECT_SPECIFIC_NAMES,
@@ -54,6 +63,8 @@ class ProjectDiscovery:
     project_url: str
     project_name: str
     chats: tuple[ProjectChat, ...]
+    complete: bool = True
+    diagnostic: str | None = None
 
 
 @dataclass(frozen=True)
@@ -69,6 +80,8 @@ class ConversationSnapshot:
     title: str
     qa_pairs: tuple[QAPair, ...]
     generating: bool = False
+    status: str = "complete"
+    diagnostic: str | None = None
 
 
 def extract_project_id(url: str) -> str:
@@ -87,7 +100,9 @@ def extract_project_id(url: str) -> str:
     return project_id
 
 
-def _chat_belongs_to_project(chat_url: str, project_id: str) -> bool:
+def _chat_belongs_to_project(
+    chat_url: str, project_id: str, *, project_scoped: bool = False
+) -> bool:
     parts = [part for part in urlsplit(chat_url).path.split("/") if part]
     try:
         conversation_index = parts.index("c")
@@ -95,7 +110,7 @@ def _chat_belongs_to_project(chat_url: str, project_id: str) -> bool:
         return False
     prefix = parts[:conversation_index]
     embedded_projects = [part for part in prefix if part.startswith("g-p-")]
-    return not embedded_projects or project_id in embedded_projects
+    return project_id in embedded_projects or (project_scoped and not embedded_projects)
 
 
 def extract_chat_id(url: str) -> str:
@@ -114,7 +129,8 @@ def extract_chat_id(url: str) -> str:
 
 
 _PROJECT_SAMPLE_SCRIPT = r"""
-({ regions, specificRegions, links, names, specificNames, emptySelectors, emptyPattern }) => {
+({ regions, specificRegions, links, names, specificNames, emptySelectors, emptyPattern,
+   loadingSelectors, endSelectors, loadMoreSelectors }) => {
   // OUTOGPT_PROJECT_DISCOVERY
   const visible = (element) => {
     if (!element) return false;
@@ -132,10 +148,10 @@ _PROJECT_SAMPLE_SCRIPT = r"""
   };
   const candidates = all(document, regions).filter(visible);
   const specificCandidates = all(document, specificRegions).filter(visible);
-  const region = candidates.find((node) => all(node, links).length > 0)
-    || candidates[0] || null;
   const specificRegion = specificCandidates.find((node) => all(node, links).length > 0)
     || specificCandidates[0] || null;
+  const region = specificRegion || candidates.find((node) => all(node, links).length > 0)
+    || candidates[0] || null;
   const anchors = region ? all(region, links) : [];
   const chats = anchors.map((anchor) => ({
     href: anchor.href || anchor.getAttribute("href") || "",
@@ -147,38 +163,76 @@ _PROJECT_SAMPLE_SCRIPT = r"""
   if (!name) name = String(document.title || "").replace(/\s*[|\-]\s*ChatGPT\s*$/i, "").trim();
   const explicitEmpty = all(document, emptySelectors).some(visible)
     || (region && new RegExp(emptyPattern, "i").test(region.textContent || ""));
+  const loading = all(document, loadingSelectors).some(visible);
+  const explicitEnd = all(document, endSelectors).some(visible);
+  const loadMore = all(document, loadMoreSelectors).some(visible);
+  const totalCandidates = anchors.map((anchor) => Number(
+    anchor.getAttribute("aria-setsize") || anchor.closest("[aria-setsize]")?.getAttribute("aria-setsize") || 0
+  )).filter((value) => Number.isFinite(value) && value > 0);
+  const totalCount = totalCandidates.length ? Math.max(...totalCandidates) : null;
   const recognized = Boolean(specificRegion || specificNameNode || chats.length || explicitEmpty);
-  return { recognized, ready: Boolean(recognized && name), name, chats, explicitEmpty };
+  return { recognized, ready: Boolean(recognized && name && !loading), name, chats,
+    projectScoped: Boolean(specificRegion && region === specificRegion),
+    explicitEmpty, loading, explicitEnd, loadMore, totalCount };
 }
 """
 
 
 _PROJECT_SCROLL_SCRIPT = r"""
-(regions) => {
+({ regions, loadMoreSelectors, linkSelectors }) => {
   // OUTOGPT_PROJECT_SCROLL
   const candidates = [];
   for (const selector of regions) {
     try { candidates.push(...document.querySelectorAll(selector)); } catch (_) {}
   }
-  let target = null;
+  const scrollables = [];
   for (const root of candidates) {
     for (const node of [root, ...root.querySelectorAll("*")]) {
       if (node.scrollHeight > node.clientHeight + 1) {
-        target = node;
-        break;
+        let linkCount = 0;
+        for (const selector of linkSelectors) {
+          try { linkCount += node.querySelectorAll(selector).length; } catch (_) {}
+        }
+        scrollables.push({ node, linkCount });
       }
     }
-    if (target) break;
+  }
+  scrollables.sort((left, right) => right.linkCount - left.linkCount
+    || right.node.scrollHeight - left.node.scrollHeight);
+  const target = scrollables[0]?.node || null;
+  const visible = (element) => {
+    if (!element) return false;
+    const style = getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    return style.display !== "none" && style.visibility !== "hidden"
+      && rect.width > 0 && rect.height > 0;
+  };
+  for (const selector of loadMoreSelectors) {
+    try {
+      const button = [...document.querySelectorAll(selector)].find(visible);
+      if (button && !button.disabled) {
+        button.click();
+        return { found: true, moved: true, atEnd: false, loadMoreClicked: true };
+      }
+    } catch (_) {}
   }
   if (target) {
     const before = target.scrollTop;
-    target.scrollTop = target.scrollHeight;
+    const maximum = Math.max(0, target.scrollHeight - target.clientHeight);
+    target.scrollTop = Math.min(maximum, before + Math.max(target.clientHeight * 0.8, 1));
     target.dispatchEvent(new Event("scroll", { bubbles: true }));
-    return target.scrollTop !== before;
+    return { found: true, moved: target.scrollTop !== before,
+      atEnd: target.scrollTop >= maximum - 1, before, after: target.scrollTop,
+      scrollHeight: target.scrollHeight, clientHeight: target.clientHeight,
+      loadMoreClicked: false };
   }
   const before = window.scrollY;
-  window.scrollTo(0, document.documentElement.scrollHeight);
-  return window.scrollY !== before;
+  const height = document.documentElement.scrollHeight;
+  const maximum = Math.max(0, height - window.innerHeight);
+  window.scrollTo(0, Math.min(maximum, before + Math.max(window.innerHeight * 0.8, 1)));
+  return { found: true, moved: window.scrollY !== before,
+    atEnd: window.scrollY >= maximum - 1, before, after: window.scrollY,
+    scrollHeight: height, clientHeight: window.innerHeight, loadMoreClicked: false };
 }
 """
 
@@ -194,14 +248,26 @@ def _project_sample(page: Any) -> Mapping[str, Any]:
             "specificNames": list(PROJECT_SPECIFIC_NAMES),
             "emptySelectors": list(PROJECT_EMPTY_STATES),
             "emptyPattern": PROJECT_EMPTY_NAME.pattern,
+            "loadingSelectors": list(PROJECT_LOADING_INDICATORS),
+            "endSelectors": list(PROJECT_END_INDICATORS),
+            "loadMoreSelectors": list(PROJECT_LOAD_MORE_CONTROLS),
         },
     )
 
 
-def _scroll_project_region(page: Any) -> bool:
-    return bool(
-        page.evaluate(_PROJECT_SCROLL_SCRIPT, list(PROJECT_CONVERSATION_REGIONS))
+def _scroll_project_region(page: Any) -> Mapping[str, Any]:
+    value = page.evaluate(
+        _PROJECT_SCROLL_SCRIPT,
+        {
+            "regions": list(PROJECT_CONVERSATION_REGIONS),
+            "loadMoreSelectors": list(PROJECT_LOAD_MORE_CONTROLS),
+            "linkSelectors": list(PROJECT_CHAT_LINKS),
+        },
     )
+    if isinstance(value, Mapping):
+        return value
+    # Backward-compatible boundary for older adapters and deterministic fixtures.
+    return {"found": True, "moved": bool(value), "atEnd": not bool(value)}
 
 
 def _project_ui_ready(sample: Mapping[str, Any]) -> bool:
@@ -253,17 +319,22 @@ def discover_project_chats(
     _check_project_page_state(page, project_id, project_url)
 
     ready_sample: Mapping[str, Any] | None = None
+    readiness_evidence = False
     for round_index in range(max_rounds):
         _check_project_page_state(page, project_id, project_url)
         sample = _project_sample(page)
+        readiness_evidence = readiness_evidence or bool(
+            sample.get("recognized") or sample.get("loading") or sample.get("name")
+        )
         if _project_ui_ready(sample):
             ready_sample = sample
             break
         if round_index + 1 < max_rounds:
             page.wait_for_timeout(poll_ms)
     if ready_sample is None:
-        raise PageStructureChanged(
-            "Could not recognize the ChatGPT project conversation list and name."
+        error_type = ProjectDiscoveryIncomplete if readiness_evidence else PageStructureChanged
+        raise error_type(
+            "The project page did not reach a recognized, non-loading conversation-list state."
         )
 
     discovered: dict[str, ProjectChat] = {}
@@ -271,7 +342,9 @@ def discover_project_chats(
     recognized = False
     explicit_empty = False
     project_name = ""
-    stabilized = False
+    completed = False
+    last_scroll: Mapping[str, Any] = {}
+    completion_reason = ""
     sample = ready_sample
     for round_index in range(max_rounds):
         _check_project_page_state(page, project_id, project_url)
@@ -291,75 +364,111 @@ def discover_project_chats(
                 chat_url = validate_chat_url(urljoin(project_url, raw_url))
             except InvalidChatUrl:
                 continue
-            if not _chat_belongs_to_project(chat_url, project_id):
+            if not _chat_belongs_to_project(
+                chat_url,
+                project_id,
+                project_scoped=bool(sample.get("projectScoped")),
+            ):
                 continue
             chat_id = extract_chat_id(chat_url)
             title = str(item.get("title") or "").strip() or "Untitled conversation"
             discovered[chat_id] = ProjectChat(chat_id, chat_url, title)
 
-        if sample_ready and (discovered or explicit_empty):
+        loading = bool(sample.get("loading"))
+        if sample_ready and not loading and (discovered or explicit_empty):
             stable = stable + 1 if len(discovered) == before else 0
         else:
             stable = 0
-        moved = _scroll_project_region(page)
-        if stable >= stable_rounds and not moved:
-            stabilized = True
+        last_scroll = _scroll_project_region(page)
+        known_total = sample.get("totalCount")
+        total_reached = (
+            isinstance(known_total, (int, float))
+            and known_total >= 0
+            and len(discovered) >= int(known_total)
+        )
+        end_confirmed = bool(
+            explicit_empty
+            or sample.get("explicitEnd")
+            or total_reached
+            or (
+                last_scroll.get("found")
+                and last_scroll.get("atEnd")
+                and not last_scroll.get("loadMoreClicked")
+                and not sample.get("loadMore")
+            )
+        )
+        if stable >= stable_rounds and end_confirmed and not loading:
+            completed = True
+            completion_reason = (
+                "explicit-empty" if explicit_empty else
+                "explicit-end" if sample.get("explicitEnd") else
+                "known-total" if total_reached else
+                "stable-scroll-end"
+            )
             break
         if round_index + 1 < max_rounds:
             page.wait_for_timeout(poll_ms)
             sample = _project_sample(page)
 
-    if not stabilized:
-        raise PageStructureChanged(
-            "The ChatGPT project conversation list did not stabilize before the scan limit."
-        )
     if not recognized or not project_name:
         raise PageStructureChanged(
             "Could not recognize the ChatGPT project conversation list and name."
         )
-    if not discovered and not explicit_empty:
-        raise PageStructureChanged(
-            "The project DOM exposed no conversation links and no explicit empty state."
+    diagnostic = None
+    if not completed:
+        diagnostic = (
+            "Project conversation discovery remained partial after bounded traversal; "
+            f"collected {len(discovered)} unique chat IDs. "
+            f"Last scroll state: {dict(last_scroll)!r}"
         )
+    elif completion_reason:
+        diagnostic = f"Discovery completed by {completion_reason}."
     return ProjectDiscovery(
         project_id,
         project_url,
         project_name,
         tuple(discovered.values()),
+        completed,
+        diagnostic,
     )
 
 
 def pair_messages(messages: Iterable[Mapping[str, Any]]) -> tuple[QAPair, ...]:
-    """Pair an ordered user/assistant stream without guessing across anomalies."""
+    """Pair logical turns, grouping consecutive assistant segments for one user."""
     pairs: list[QAPair] = []
     pending_user: str | None = None
+    assistant_segments: list[str] = []
     for message in messages:
         role = str(message.get("role") or "")
         markdown = str(message.get("markdown") or "").strip()
         if role not in {"user", "assistant"} or not markdown:
-            raise PageStructureChanged(
+            raise ConversationStructureError(
                 "A conversation message had an invalid role or empty body."
             )
         if role == "user":
             if pending_user is not None:
-                raise PageStructureChanged(
-                    "Two user messages appeared without a safely pairable assistant response."
-                )
+                if not assistant_segments:
+                    raise ConversationStructureError(
+                        "Two user messages appeared without a safely pairable assistant response."
+                    )
+                pairs.append(QAPair(pending_user, "\n\n".join(assistant_segments)))
             pending_user = markdown
+            assistant_segments = []
             continue
         if pending_user is None:
-            raise PageStructureChanged(
+            raise ConversationStructureError(
                 "An assistant message appeared without a preceding user message."
             )
-        pairs.append(QAPair(pending_user, markdown))
-        pending_user = None
+        assistant_segments.append(markdown)
+    if pending_user is not None and assistant_segments:
+        pairs.append(QAPair(pending_user, "\n\n".join(assistant_segments)))
     # One trailing user message is intentionally ignored: it is not a complete QA pair.
     return tuple(pairs)
 
 
 _CONVERSATION_SCRIPT = r"""
-({ rootSelectors, turnSelectors, roleSelectors, attachmentSelectors, imageSelectors,
-   titleSelectors, emptySelectors, exclusions }) => {
+({ rootSelectors, turnSelectors, roleSelectors, auxiliarySelectors, attachmentSelectors, imageSelectors,
+   titleSelectors, emptySelectors, loadingSelectors, exclusions }) => {
   // OUTOGPT_CONVERSATION_EXTRACTION
   const text = (node) => String(node?.textContent || "");
   const clean = (value) => String(value || "")
@@ -484,25 +593,26 @@ _CONVERSATION_SCRIPT = r"""
     for (let current = node; current && current !== turn; current = current.parentElement) depth += 1;
     return depth;
   };
-  const primaryRoleNode = (turn) => {
+  const logicalRoleNodes = (turn) => {
     const roleNodes = [
       ...(matches(turn, roleSelectors) ? [turn] : []),
       ...query(turn, roleSelectors)
     ].filter(
       (node) => !inactive(node, turn)
     );
-    const roles = new Set(roleNodes.map(
-      (node) => node.getAttribute("data-message-author-role")
-    ));
-    if (roles.size !== 1) return null;
     const outermost = roleNodes.filter((node) => !roleNodes.some(
       (other) => other !== node && other.contains(node)
     ));
-    if (!outermost.length) return null;
-    const minimumDepth = Math.min(...outermost.map((node) => depthFromTurn(node, turn)));
-    const primary = outermost.filter((node) => depthFromTurn(node, turn) === minimumDepth);
-    if (primary.length !== 1) return null;
-    return primary[0];
+    const unique = [];
+    const seen = new Set();
+    for (const node of outermost.sort((left, right) => depthFromTurn(left, turn) - depthFromTurn(right, turn))) {
+      const id = node.getAttribute("data-message-id") || node.getAttribute("data-turn-id") || "";
+      const key = id ? `id:${id}` : `${node.getAttribute("data-message-author-role")}:${clean(node.textContent)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push(node);
+    }
+    return unique;
   };
   const pruneInactiveChildren = (source, clone) => {
     const sourceChildren = [...source.children];
@@ -545,40 +655,64 @@ _CONVERSATION_SCRIPT = r"""
     }
     return evidence;
   };
-  const stableTurnId = (turn, roleNode) => {
+  const stableTurnId = (turn, roleNode, index, count) => {
     for (const [attribute, node] of [
-      ["data-turn-id", turn],
-      ["data-message-id", turn],
       ["data-message-id", roleNode],
       ["data-turn-id", roleNode],
+      ["data-turn-id", turn],
+      ["data-message-id", turn],
       ["data-testid", turn]
     ]) {
       const value = String(node.getAttribute?.(attribute) || "").trim();
-      if (value) return `${attribute}:${value}`;
+      if (value) return `${attribute}:${value}${count > 1 ? `:${index}` : ""}`;
     }
     return "";
   };
   let invalidTurns = 0;
-  const messages = turns.map((turn) => {
-    const roleNode = primaryRoleNode(turn);
-    if (!roleNode) { invalidTurns += 1; return null; }
-    const attachments = attachmentEvidence(roleNode);
-    const clone = roleNode.cloneNode(true);
-    pruneInactiveChildren(roleNode, clone);
-    for (const selector of attachmentSelectors) {
-      try { clone.querySelectorAll(selector).forEach((node) => node.remove()); } catch (_) {}
+  const invalidTurnDetails = [];
+  let auxiliaryTurns = 0;
+  const messages = turns.flatMap((turn) => {
+    const roleNodes = logicalRoleNodes(turn);
+    if (!roleNodes.length) {
+      if (query(turn, auxiliarySelectors).some((node) => !inactive(node, turn))) {
+        auxiliaryTurns += 1;
+        return [];
+      }
+      const clone = turn.cloneNode(true);
+      for (const selector of exclusions) {
+        try { clone.querySelectorAll(selector).forEach((node) => node.remove()); } catch (_) {}
+      }
+      const leftover = clean(clone.textContent);
+      if (leftover) {
+        invalidTurns += 1;
+        invalidTurnDetails.push({
+          turnId: String(turn.getAttribute("data-turn-id")
+            || turn.getAttribute("data-message-id") || turn.getAttribute("data-testid") || ""),
+          text: leftover.slice(0, 160)
+        });
+      }
+      else auxiliaryTurns += 1;
+      return [];
     }
-    for (const selector of exclusions) {
-      try { clone.querySelectorAll(selector).forEach((node) => node.remove()); } catch (_) {}
-    }
-    const content = clone.querySelector(".markdown") || clone;
-    return {
-      turnId: stableTurnId(turn, roleNode),
-      role: roleNode.getAttribute("data-message-author-role"),
-      markdown: clean(render(content)),
-      attachments
-    };
-  }).filter(Boolean);
+    return roleNodes.map((roleNode, index) => {
+      const attachments = attachmentEvidence(roleNode);
+      const clone = roleNode.cloneNode(true);
+      pruneInactiveChildren(roleNode, clone);
+      for (const selector of attachmentSelectors) {
+        try { clone.querySelectorAll(selector).forEach((node) => node.remove()); } catch (_) {}
+      }
+      for (const selector of exclusions) {
+        try { clone.querySelectorAll(selector).forEach((node) => node.remove()); } catch (_) {}
+      }
+      const content = clone.querySelector(".markdown") || clone;
+      return {
+        turnId: stableTurnId(turn, roleNode, index, roleNodes.length),
+        role: roleNode.getAttribute("data-message-author-role"),
+        markdown: clean(render(content)),
+        attachments
+      };
+    });
+  });
   let title = "";
   for (const selector of titleSelectors) {
     const node = document.querySelector(selector);
@@ -596,12 +730,16 @@ _CONVERSATION_SCRIPT = r"""
       })) explicitEmpty = true;
     } catch (_) {}
   }
+  const loading = query(document, loadingSelectors).some((node) => !inactive(node));
   return {
     recognized: turns.length > 0 || explicitEmpty,
     explicitEmpty,
     title,
     turnCount: turns.length,
     invalidTurns,
+    invalidTurnDetails,
+    auxiliaryTurns,
+    loading,
     messages
   };
 }
@@ -670,9 +808,10 @@ _CONVERSATION_SCROLL_TOP_SCRIPT = r"""
   }
   if (!container) return { found: false, atTop: false, wasAtTop: false };
   const before = Number(container.scrollTop || 0);
-  try { container.scrollTo({ top: 0, behavior: "instant" }); }
-  catch (_) { container.scrollTop = 0; }
-  container.scrollTop = 0;
+  const target = Math.max(0, before - Math.max(Number(container.clientHeight || 0) * 0.8, 1));
+  try { container.scrollTo({ top: target, behavior: "instant" }); }
+  catch (_) { container.scrollTop = target; }
+  container.scrollTop = target;
   try { container.dispatchEvent(new Event("scroll", { bubbles: true })); } catch (_) {}
   const after = Number(container.scrollTop || 0);
   return {
@@ -696,10 +835,12 @@ def _conversation_sample(page: Any) -> Mapping[str, Any]:
             "rootSelectors": list(CONVERSATION_ROOTS),
             "turnSelectors": list(CONVERSATION_TURNS),
             "roleSelectors": list(MESSAGE_ROLE_NODES),
+            "auxiliarySelectors": list(MESSAGE_AUXILIARY_NODES),
             "attachmentSelectors": list(MESSAGE_ATTACHMENT_NODES),
             "imageSelectors": list(MESSAGE_ATTACHMENT_IMAGES),
             "titleSelectors": list(CONVERSATION_TITLES),
             "emptySelectors": list(CONVERSATION_EMPTY_STATES),
+            "loadingSelectors": list(CONVERSATION_LOADING_INDICATORS),
             "exclusions": list(MESSAGE_UI_EXCLUSIONS),
         },
     )
@@ -723,7 +864,10 @@ def _normalize_conversation_messages(
 ) -> tuple[dict[str, str], ...]:
     """Add placeholders only when the DOM reported concrete attachment evidence."""
     normalized: list[dict[str, str]] = []
+    seen_ids: dict[str, tuple[str, str]] = {}
     for message in messages:
+        if message.get("auxiliary"):
+            continue
         role = str(message.get("role") or "")
         markdown = str(message.get("markdown") or "").strip()
         additions: list[str] = []
@@ -745,13 +889,21 @@ def _normalize_conversation_messages(
                 additions.append(placeholder)
         if additions:
             markdown = "\n\n".join(part for part in (markdown, *additions) if part)
-        normalized.append(
-            {
-                "turnId": str(message.get("turnId") or "").strip(),
-                "role": role,
-                "markdown": markdown,
-            }
-        )
+        turn_id = str(message.get("turnId") or "").strip()
+        identity = (role, markdown)
+        if turn_id and seen_ids.get(turn_id) == identity:
+            continue
+        if turn_id and turn_id in seen_ids and seen_ids[turn_id] != identity:
+            raise ConversationStructureError(
+                f"Conversation message identity {turn_id!r} was rendered with conflicting content."
+            )
+        if normalized and not turn_id and not normalized[-1]["turnId"] and (
+            normalized[-1]["role"], normalized[-1]["markdown"]
+        ) == identity:
+            continue
+        if turn_id:
+            seen_ids[turn_id] = identity
+        normalized.append({"turnId": turn_id, "role": role, "markdown": markdown})
     return tuple(normalized)
 
 
@@ -797,7 +949,7 @@ def _merge_identified_history(
     existing_ids = _stable_turn_ids(existing)
     current_ids = _stable_turn_ids(current)
     if existing_ids is None or current_ids is None:
-        raise PageStructureChanged(
+        raise ConversationHistoryIncomplete(
             "Virtualized conversation turns did not expose stable unique identities."
         )
     existing_by_id = dict(zip(existing_ids, existing))
@@ -805,14 +957,14 @@ def _merge_identified_history(
     shared_current = [identifier for identifier in current_ids if identifier in existing_by_id]
     shared_existing = [identifier for identifier in existing_ids if identifier in current_by_id]
     if not shared_current or shared_current != shared_existing:
-        raise PageStructureChanged(
+        raise ConversationHistoryIncomplete(
             "Conversation history windows could not be merged without guessing turn order."
         )
     for identifier in shared_current:
         old = existing_by_id[identifier]
         new = current_by_id[identifier]
         if old["role"] != new["role"]:
-            raise PageStructureChanged(
+            raise ConversationHistoryIncomplete(
                 "A conversation turn identity changed role while history was loading."
             )
 
@@ -825,7 +977,7 @@ def _merge_identified_history(
         existing_gap = existing[existing_index:next_existing]
         current_gap = current[current_index:next_current]
         if existing_gap and current_gap:
-            raise PageStructureChanged(
+            raise ConversationHistoryIncomplete(
                 "Conversation history windows contained an ambiguous gap between turns."
             )
         merged.extend(current_gap or existing_gap)
@@ -835,7 +987,7 @@ def _merge_identified_history(
     existing_tail = existing[existing_index:]
     current_tail = current[current_index:]
     if existing_tail and current_tail:
-        raise PageStructureChanged(
+        raise ConversationHistoryIncomplete(
             "Conversation history windows contained an ambiguous trailing gap."
         )
     merged.extend(current_tail or existing_tail)
@@ -869,7 +1021,7 @@ def _merge_history_messages(
         return current
     if _contains_message_sequence(existing, current):
         return existing
-    raise PageStructureChanged(
+    raise ConversationHistoryIncomplete(
         "Virtualized conversation history changed without stable turn identities."
     )
 
@@ -885,6 +1037,8 @@ def _hydrate_conversation_history(
     previous: tuple[Any, ...] | None = None
     stable = 0
     accumulated: tuple[dict[str, str], ...] = ()
+    recognized_seen = False
+    last_sample: Mapping[str, Any] = {}
     for round_index in range(max_rounds):
         if login_or_challenge_visible(page) or "/auth/" in getattr(page, "url", ""):
             raise LoginRequired(
@@ -893,7 +1047,10 @@ def _hydrate_conversation_history(
         if generation_in_progress(page):
             return None
         sample = _conversation_sample(page)
-        if sample.get("recognized"):
+        last_sample = sample
+        loading = bool(sample.get("loading"))
+        recognized_seen = recognized_seen or bool(sample.get("recognized"))
+        if sample.get("recognized") and not loading:
             messages = _normalize_conversation_messages(sample.get("messages") or ())
             if not sample.get("invalidTurns"):
                 accumulated = _merge_history_messages(accumulated, messages)
@@ -913,7 +1070,8 @@ def _hydrate_conversation_history(
                 and scroll_state.get("wasAtTop")
                 and scroll_state.get("atTop")
             )
-            if at_stable_top:
+            has_complete_shape = bool(messages or sample.get("explicitEmpty"))
+            if at_stable_top and has_complete_shape:
                 stable = stable + 1 if fingerprint == previous else 1
             else:
                 stable = 0
@@ -922,8 +1080,10 @@ def _hydrate_conversation_history(
                 if generation_in_progress(page):
                     return None
                 if sample.get("invalidTurns"):
-                    raise PageStructureChanged(
-                        "A conversation turn did not expose exactly one primary user or assistant message."
+                    raise ConversationStructureError(
+                        "A rendered conversation turn contained unclassified content "
+                        "without a supported user or assistant role: "
+                        f"{sample.get('invalidTurnDetails') or sample.get('invalidTurns')}"
                     )
                 complete = dict(sample)
                 complete["messages"] = accumulated
@@ -931,8 +1091,16 @@ def _hydrate_conversation_history(
                 return complete
         if round_index + 1 < max_rounds:
             page.wait_for_timeout(poll_ms)
-    raise PageStructureChanged(
-        "The complete conversation history did not stabilize before the scan limit."
+    if not recognized_seen or bool(last_sample.get("loading")):
+        return {
+            "_status": "unknown",
+            "_diagnostic": (
+                "Conversation loading did not reach a recognized, non-loading state "
+                f"within {max_rounds} samples."
+            ),
+        }
+    raise ConversationHistoryIncomplete(
+        "The rendered conversation history did not form a stable, complete window before the scan limit."
     )
 
 
@@ -950,7 +1118,7 @@ def read_conversation(
             chat.chat_url, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT_MS
         )
     except Exception as exc:
-        raise PageStructureChanged(
+        raise ConversationLoadingUnknown(
             f"Could not load conversation {chat.chat_id}: {exc}"
         ) from exc
     if login_or_challenge_visible(page) or "/auth/" in getattr(page, "url", ""):
@@ -960,11 +1128,11 @@ def read_conversation(
     try:
         loaded_url = validate_chat_url(getattr(page, "url", chat.chat_url))
     except InvalidChatUrl as exc:
-        raise PageStructureChanged(
+        raise ProjectAccessFailed(
             f"Conversation {chat.chat_id} redirected away from a conversation page."
         ) from exc
     if extract_chat_id(loaded_url) != chat.chat_id:
-        raise PageStructureChanged(
+        raise ProjectAccessFailed(
             f"Conversation {chat.chat_id} redirected to a different conversation."
         )
 
@@ -975,7 +1143,20 @@ def read_conversation(
         poll_ms=poll_ms,
     )
     if complete is None:
-        return ConversationSnapshot(chat.chat_id, chat.chat_url, chat.title, (), True)
+        return ConversationSnapshot(
+            chat.chat_id, chat.chat_url, chat.title, (), True, "generating",
+            "A supported stop-generation control was visible."
+        )
+    if complete.get("_status") == "unknown":
+        return ConversationSnapshot(
+            chat.chat_id,
+            chat.chat_url,
+            chat.title,
+            (),
+            False,
+            "unknown",
+            str(complete.get("_diagnostic") or "Conversation readiness was unknown."),
+        )
     title = str(complete.get("title") or chat.title).strip() or chat.title
     return ConversationSnapshot(
         chat.chat_id,
@@ -983,4 +1164,6 @@ def read_conversation(
         title,
         pair_messages(complete.get("messages") or ()),
         False,
+        "complete",
+        None,
     )

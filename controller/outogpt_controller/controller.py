@@ -44,6 +44,10 @@ ERROR_CODES = {
     "InvalidProjectUrl": "INVALID_PROJECT_URL",
     "InvalidChatUrl": "INVALID_CHAT_URL",
     "ProjectAccessFailed": "PROJECT_ACCESS_FAILED",
+    "ProjectDiscoveryIncomplete": "PROJECT_DISCOVERY_INCOMPLETE",
+    "ConversationLoadingUnknown": "CONVERSATION_LOADING_UNKNOWN",
+    "ConversationHistoryIncomplete": "CONVERSATION_HISTORY_INCOMPLETE",
+    "ConversationStructureError": "CONVERSATION_STRUCTURE_ERROR",
     "ProjectStateError": "PROJECT_STATE_ERROR",
     "MarkdownArchiveError": "MARKDOWN_ARCHIVE_ERROR",
 }

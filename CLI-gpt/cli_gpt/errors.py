@@ -87,3 +87,19 @@ class PageStructureChanged(CliGptError):
 
 class ProjectAccessFailed(CliGptError):
     code = "PROJECT_ACCESS_FAILED"
+
+
+class ProjectDiscoveryIncomplete(PageStructureChanged):
+    code = "PROJECT_DISCOVERY_INCOMPLETE"
+
+
+class ConversationLoadingUnknown(CliGptError):
+    code = "CONVERSATION_LOADING_UNKNOWN"
+
+
+class ConversationHistoryIncomplete(PageStructureChanged):
+    code = "CONVERSATION_HISTORY_INCOMPLETE"
+
+
+class ConversationStructureError(PageStructureChanged):
+    code = "CONVERSATION_STRUCTURE_ERROR"
