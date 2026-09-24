@@ -1,0 +1,55 @@
+{
+  "recorded_at": "2026-09-25T03:37:34.329395+09:00",
+  "base_commit": "8915ba3060f84ced172bf99cb4f646018e137ac9",
+  "original_diagnostic_files": {
+    "outputs/findings.md": "not found",
+    "outputs/comparison.json": "not found",
+    "outputs/validation.json": "not found"
+  },
+  "synthetic_tests": {
+    "cli_gpt": {
+      "total": 81,
+      "passed": 79,
+      "skipped_opt_in": 2
+    },
+    "controller": {
+      "total": 59,
+      "passed": 59
+    },
+    "extension": {
+      "total": 20,
+      "passed": 20
+    },
+    "passed_total": 158
+  },
+  "real_chrome_synthetic_fixture": {
+    "passed": 1,
+    "traffic": "synthetic routed responses",
+    "account_data_verified": false,
+    "duration_seconds": 6.237
+  },
+  "authenticated_live_account": {
+    "cdp_connection": "passed",
+    "project_and_conversation_verification": "blocked",
+    "reason": "Redirected to Google sign-in; no project or conversation responses observed",
+    "archived_chats": 0
+  },
+  "unchanged_setup_and_converter_checks": {
+    "CLI-gpt/cli_gpt/setup.py": true,
+    "CLI-gpt/cli_gpt/browser.py": true,
+    "CLI-gpt/cli_gpt/config.py": true,
+    "controller/outogpt_controller/paths.py": true,
+    "extension/setup/setup.js": true,
+    "extension/setup/setup.html": true,
+    "extension/setup/setup.css": true,
+    "extension/markdown/converter.js": true,
+    "extension/markdown/chatgpt-rules.js": true,
+    "existing DOM Markdown renderer": true
+  },
+  "limitations": [
+    "Original CDP diagnostic artifacts were not available.",
+    "Authenticated project pagination and conversation response schemas remain unverified in this session.",
+    "Unknown content types, ambiguous visible branches, and unverified messages pause instead of completing.",
+    "Appending full revisions increases Markdown file size."
+  ]
+}

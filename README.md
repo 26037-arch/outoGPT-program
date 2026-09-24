@@ -118,7 +118,7 @@ login. The live integration test is opt-in and is not part of normal test runs.
 
 ## Project Markdown updates
 
-Archive every currently visible conversation in a ChatGPT Project with:
+Archive every network-verified conversation in a ChatGPT Project with:
 
 ```powershell
 outogpt project update --project-url "https://chatgpt.com/g/g-p-.../project"
@@ -135,15 +135,41 @@ absolute OS path is not exposed to the controller. Each project directory contai
 and one `chats/<chat-id>.md` file per archived conversation. Project and chat IDs,
 not mutable titles, are used to recover existing archives and filenames safely.
 
-Updates are append-only at the completed QA-pair level. A pair is exactly one user
-message followed by one or more assistant message segments. Only newly completed pairs are added,
-and completion markers prevent duplicate appends after an interrupted state write.
-Changed Markdown is written to a verified temporary file and atomically replaces the
-target. Repeated runs therefore do not duplicate content. If ChatGPT reports fewer complete
-pairs than the archive already contains, the older archive is preserved unchanged.
+CDP network monitoring is registered before navigating to either the project or a
+conversation. Project discovery requires a connected request/response cursor chain
+ending in an explicit `cursor: null`. Conversation loading requires a connected
+`page_info.start_cursor` / request `before` chain ending in
+`has_previous_page: false`, with no related requests or response bodies pending.
+Scroll position and a temporarily stable DOM are never completion evidence.
 
-Chats that are still generating increment `skipped_generating_chats` in the result
-and are not written; other chats continue updating. A final user message without an
-assistant response is also left for a later run. Historical edits and regenerated
-answers are not detected when the completed QA-pair count is unchanged, because this
-command intentionally uses pair count rather than content hashes as its sync key.
+Messages observed while scrolling are retained by their network message IDs even
+when DOM virtualization removes them. The collected content is checked against all
+pages. System/tool/explicitly hidden messages are retained separately as exact
+source evidence in the same MD. Verified visible messages, including an unanswered
+final user message, are preserved with the existing Markdown converter. Unknown
+schemas, unverified content, or ambiguous visible branches pause the update.
+
+The updater retries the current discovery/read/save stage up to three times. It
+waits for generation to stop, then reloads that same chat to verify the finished
+response. It never skips a failed, loading, or generating chat to visit the next
+one. `update-progress.json` records the stage, discovered IDs and pending chat.
+Run the same update command to resume; the pending chat is visited first after
+project discovery is verified. Previously completed chats are revalidated too.
+
+Existing Markdown bytes are preserved. A changed conversation appends a complete
+revision with SHA-256 and length framing, including same-count edits and count
+regressions. This trades extra disk space for preservation of earlier versions.
+Unchanged revisions are not duplicated. The verified temporary file is atomically
+replaced, read back, and compared before `project.json` records chat completion.
+Interrupted state writes can adopt an already-saved revision only after its full
+content matches. Corrupt snapshots pause the update; legacy MD and unmarked tails
+are preserved. `qa_count` describes the latest verified revision, not the sum of
+all historical Q/A headings in the file.
+
+Project-update results include `paused` and `pending_chat_id`. Legacy `skipped_*`
+fields remain for result compatibility and stay zero. Setup, Chrome profile,
+archive-root resolution and the browser lifecycle remain unchanged.
+
+Validation details and the distinction between synthetic tests, Chrome/CDP fixture
+tests, and authenticated live-account verification are in
+[`outputs/preservation-report.md`](outputs/preservation-report.md).

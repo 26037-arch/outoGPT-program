@@ -106,7 +106,9 @@ def _write(payload: dict[str, Any], as_json: bool) -> None:
         print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
         return
     if "discovered_chats" in payload:
-        print("status: completed" if payload.get("ok") else "status: completed_with_errors")
+        print("status: completed" if payload.get("ok") else "status: paused" if payload.get("paused") else "status: failed")
+        if payload.get("pending_chat_id"):
+            print(f"pending_chat_id: {payload['pending_chat_id']}")
         print(f"project_url: {payload.get('project_url', '')}")
         print(f"project_name: {payload.get('project_name', '')}")
         for key in (

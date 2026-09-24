@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import uuid
@@ -54,6 +55,8 @@ def _atomic_text(path: Path, contents: str) -> None:
         if temporary.read_text(encoding="utf-8") != contents:
             raise OSError(f"Temporary-file verification failed for {temporary}")
         os.replace(temporary, path)
+        if path.read_text(encoding="utf-8") != contents:
+            raise OSError(f"Committed-file verification failed for {path}")
     finally:
         try:
             temporary.unlink()
@@ -68,6 +71,7 @@ class ChatState:
     title: str
     qa_count: int
     file: str
+    content_sha256: str | None = None
 
     @classmethod
     def from_dict(cls, value: Any) -> "ChatState":
@@ -80,12 +84,20 @@ class ChatState:
                 title=str(value["title"]),
                 qa_count=int(value["qa_count"]),
                 file=str(value["file"]),
+                content_sha256=value.get("content_sha256"),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise ProjectStateError("A project chat state entry is malformed.") from exc
         expected_file = f"chats/{state.chat_id}.md"
         if (
             state.qa_count < 0
+            or (
+                state.content_sha256 is not None
+                and (
+                    not isinstance(state.content_sha256, str)
+                    or not re.fullmatch(r"[a-f0-9]{64}", state.content_sha256)
+                )
+            )
             or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", state.chat_id)
             or state.file.replace("\\", "/") != expected_file
         ):
@@ -233,8 +245,132 @@ class ProjectArchive:
 
     def chat_path(self, chat_id: str) -> Path:
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", chat_id):
-            raise MarkdownArchiveError(f"Unsafe chat id cannot be archived: {chat_id!r}")
+            raise MarkdownArchiveError(
+                f"Unsafe chat id cannot be archived: {chat_id!r}"
+            )
         return self.chats_directory / f"{chat_id}.md"
+
+    def save_progress(self, progress: dict) -> None:
+        """Separate recovery journal; never claims that a chat has been saved."""
+        _atomic_text(
+            self.directory / "update-progress.json",
+            json.dumps(progress, ensure_ascii=False, indent=2) + "\n",
+        )
+
+    def load_progress(self) -> dict:
+        path = self.directory / "update-progress.json"
+        if not path.exists():
+            return {}
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(value, dict):
+            raise ProjectStateError("Update recovery journal is not an object.")
+        pending = value.get("pending_chat_id")
+        discovered = value.get("discovered", [])
+        if (
+            value.get("status") not in {"running", "paused", "complete"}
+            or (
+                pending is not None
+                and (
+                    not isinstance(pending, str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", pending)
+                )
+            )
+            or not isinstance(discovered, list)
+        ):
+            raise ProjectStateError(
+                "Update recovery journal has invalid status or chat IDs."
+            )
+        from cli_gpt.config import validate_chat_url
+        from cli_gpt.project import extract_chat_id
+
+        for item in discovered:
+            try:
+                if (
+                    not isinstance(item, dict)
+                    or set(item) != {"chat_id", "chat_url", "title"}
+                    or extract_chat_id(validate_chat_url(item["chat_url"]))
+                    != item["chat_id"]
+                ):
+                    raise ValueError("Invalid pending chat")
+            except Exception as exc:
+                raise ProjectStateError(
+                    "Update recovery journal contains an invalid chat URL."
+                ) from exc
+        return value
+
+    @staticmethod
+    def _snapshot_body(snapshot) -> str:
+        body = ProjectArchive._document_header(
+            snapshot.title, snapshot.chat_id, snapshot.chat_url
+        )
+        body += ProjectArchive._render_pairs(list(snapshot.qa_pairs), 1)
+        # QA pairing cannot represent a final unanswered user, empty conversations,
+        # or hidden messages. Retain every verified UUID and exact network content
+        # alongside the existing Markdown conversion, inside the same MD file.
+        if snapshot.messages or snapshot.non_ui_messages:
+            body += "\n## Verified messages\n"
+            for message in snapshot.messages:
+                body += f"\n### {message['role']} ({message['id']})\n\n{message['markdown']}\n"
+            sources = {
+                "messages": list(snapshot.messages),
+                "non_ui_messages": list(snapshot.non_ui_messages),
+            }
+            raw = json.dumps(sources, ensure_ascii=False, indent=2)
+            fence = "`" * max(
+                3, 1 + max((len(m[0]) for m in re.finditer(r"`+", raw)), default=0)
+            )
+            body += f"\n## Message evidence\n\n{fence}json\n{raw}\n{fence}\n"
+        return body
+
+    def sync_snapshot(self, snapshot) -> tuple[bool, str]:
+        """Append a content-verified revision without ever deleting prior MD bytes.
+
+        Length framing avoids treating marker-like text inside user content as a
+        checkpoint. An orphan revision is adopted only after exact body comparison.
+        Historical edits and count regressions create revisions too.
+        """
+        path = self.chat_path(snapshot.chat_id)
+        known = self.state.chats.get(snapshot.chat_id)
+        if known and not path.is_file():
+            raise MarkdownArchiveError(f"Known chat Markdown is missing: {path}")
+        try:
+            existing = path.read_text(encoding="utf-8") if path.exists() else ""
+            body = self._snapshot_body(snapshot)
+            digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+            pattern = re.compile(
+                r"(?m)^<!-- outogpt-snapshot:([a-f0-9]{64}):(\d+) -->\n"
+            )
+            offset = 0
+            latest = None
+            hashes = set()
+            while match := pattern.search(existing, offset):
+                end = match.end() + int(match[2])
+                stored = existing[match.end() : end]
+                trailer = "<!-- outogpt-snapshot-end -->\n"
+                if hashlib.sha256(stored.encode("utf-8")).hexdigest() != match[
+                    1
+                ] or not existing[end:].startswith(trailer):
+                    raise MarkdownArchiveError(
+                        "Archived snapshot failed length/content verification."
+                    )
+                latest = (match[1], stored)
+                hashes.add(match[1])
+                offset = end + len(trailer)
+            if known and known.content_sha256 and known.content_sha256 not in hashes:
+                raise MarkdownArchiveError("Registered snapshot content is missing.")
+            if latest == (digest, body) and offset == len(existing):
+                return False, digest
+            revision = f"\n<!-- outogpt-snapshot:{digest}:{len(body)} -->\n{body}<!-- outogpt-snapshot-end -->\n"
+            _atomic_text(path, existing + revision)
+            if path.read_text(encoding="utf-8") != existing + revision:
+                raise MarkdownArchiveError(
+                    "Saved snapshot content differs from the verified candidate."
+                )
+            return True, digest
+        except (OSError, UnicodeError) as exc:
+            raise MarkdownArchiveError(
+                f"Could not save and verify {path}: {exc}"
+            ) from exc
 
     @staticmethod
     def _document_header(title: str, chat_id: str, chat_url: str) -> str:
@@ -315,7 +451,7 @@ class ProjectArchive:
     def recover_completed_qa_count(
         self, chat_id: str, *, minimum_expected: int = 0
     ) -> int:
-        """Validate markers and remove only an interrupted, unmarked tail."""
+        """Validate legacy markers without deleting unmarked user content."""
         path = self.chat_path(chat_id)
         if not path.is_file():
             raise MarkdownArchiveError(f"Known chat Markdown is missing: {path}")
@@ -344,12 +480,9 @@ class ProjectArchive:
             complete_end += len(separator)
         tail = contents[complete_end:]
         if tail:
-            try:
-                _atomic_text(path, contents[:complete_end])
-            except OSError as exc:
-                raise MarkdownArchiveError(
-                    f"Could not recover an interrupted append in {path}: {exc}"
-                ) from exc
+            raise MarkdownArchiveError(
+                f"Legacy Markdown has an unmarked tail; existing bytes were preserved: {path}"
+            )
         return len(markers)
 
     def completed_qa_count(self, chat_id: str, *, minimum_expected: int = 0) -> int:

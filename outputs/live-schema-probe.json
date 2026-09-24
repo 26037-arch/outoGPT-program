@@ -1,0 +1,13 @@
+{
+  "kind": "live_chrome_schema_probe",
+  "requests": [],
+  "responses": [],
+  "error": null,
+  "page_title": "로그인 - Google 계정",
+  "login_or_challenge_visible": false,
+  "connected_pages": 0,
+  "chat_count": 0,
+  "page_origin": "https://accounts.google.com",
+  "page_path": "/v3/signin/identifier",
+  "result": "blocked_by_login_redirect; no project or conversation responses verified"
+}

@@ -5,10 +5,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urlsplit
 
 from .chatgpt import generation_in_progress
 from .config import validate_chat_url, validate_project_url
+from .pagination import PaginationEvidence
 from .errors import (
     ConversationHistoryIncomplete,
     ConversationLoadingUnknown,
@@ -18,7 +19,6 @@ from .errors import (
     LoginRequired,
     PageStructureChanged,
     ProjectAccessFailed,
-    ProjectDiscoveryIncomplete,
 )
 from .selectors import (
     CONVERSATION_ROOTS,
@@ -82,6 +82,8 @@ class ConversationSnapshot:
     generating: bool = False
     status: str = "complete"
     diagnostic: str | None = None
+    messages: tuple[Mapping[str, Any], ...] = ()
+    non_ui_messages: tuple[Mapping[str, Any], ...] = ()
 
 
 def extract_project_id(url: str) -> str:
@@ -294,9 +296,7 @@ def _check_project_page_state(page: Any, project_id: str, project_url: str) -> N
             "ChatGPT redirected away from the requested project."
         ) from exc
     if current_project_id != project_id:
-        raise ProjectAccessFailed(
-            "ChatGPT redirected away from the requested project."
-        )
+        raise ProjectAccessFailed("ChatGPT redirected away from the requested project.")
 
 
 def discover_project_chats(
@@ -304,133 +304,64 @@ def discover_project_chats(
     project_url: str,
     *,
     stable_rounds: int = 3,
-    max_rounds: int = 80,
+    max_rounds: int = 1500,
     poll_ms: int = DOM_POLL_MS,
 ) -> ProjectDiscovery:
-    """Wait for project readiness, then discover links using bounded stabilization."""
+    """Only a connected response chain ending in cursor:null proves completion."""
+    if stable_rounds < 1 or max_rounds < 1 or poll_ms < 0:
+        raise ValueError("Polling limits must be positive (poll_ms may be zero).")
     project_url = validate_project_url(project_url)
     project_id = extract_project_id(project_url)
-    try:
+    discovered: dict[str, ProjectChat] = {}
+    name = project_id
+    with PaginationEvidence("project", project_id).start(page) as evidence:
         page.goto(
             project_url, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT_MS
         )
-    except Exception as exc:
-        raise ProjectAccessFailed(f"Could not open the ChatGPT project: {exc}") from exc
-    _check_project_page_state(page, project_id, project_url)
-
-    ready_sample: Mapping[str, Any] | None = None
-    readiness_evidence = False
-    for round_index in range(max_rounds):
-        _check_project_page_state(page, project_id, project_url)
-        sample = _project_sample(page)
-        readiness_evidence = readiness_evidence or bool(
-            sample.get("recognized") or sample.get("loading") or sample.get("name")
-        )
-        if _project_ui_ready(sample):
-            ready_sample = sample
-            break
-        if round_index + 1 < max_rounds:
-            page.wait_for_timeout(poll_ms)
-    if ready_sample is None:
-        error_type = ProjectDiscoveryIncomplete if readiness_evidence else PageStructureChanged
-        raise error_type(
-            "The project page did not reach a recognized, non-loading conversation-list state."
-        )
-
-    discovered: dict[str, ProjectChat] = {}
-    stable = 0
-    recognized = False
-    explicit_empty = False
-    project_name = ""
-    completed = False
-    last_scroll: Mapping[str, Any] = {}
-    completion_reason = ""
-    sample = ready_sample
-    for round_index in range(max_rounds):
-        _check_project_page_state(page, project_id, project_url)
-        sample_ready = _project_ui_ready(sample)
-        recognized = recognized or bool(sample.get("recognized"))
-        explicit_empty = explicit_empty or bool(sample.get("explicitEmpty"))
-        candidate_name = str(sample.get("name") or "").strip()
-        if candidate_name:
-            project_name = candidate_name
-
-        before = len(discovered)
-        for item in sample.get("chats") or ():
-            raw_url = str(item.get("href") or "").strip()
-            if not raw_url:
-                continue
-            try:
-                chat_url = validate_chat_url(urljoin(project_url, raw_url))
-            except InvalidChatUrl:
-                continue
-            if not _chat_belongs_to_project(
-                chat_url,
-                project_id,
-                project_scoped=bool(sample.get("projectScoped")),
-            ):
-                continue
-            chat_id = extract_chat_id(chat_url)
-            title = str(item.get("title") or "").strip() or "Untitled conversation"
-            discovered[chat_id] = ProjectChat(chat_id, chat_url, title)
-
-        loading = bool(sample.get("loading"))
-        if sample_ready and not loading and (discovered or explicit_empty):
-            stable = stable + 1 if len(discovered) == before else 0
-        else:
-            stable = 0
-        last_scroll = _scroll_project_region(page)
-        known_total = sample.get("totalCount")
-        total_reached = (
-            isinstance(known_total, (int, float))
-            and known_total >= 0
-            and len(discovered) >= int(known_total)
-        )
-        end_confirmed = bool(
-            explicit_empty
-            or sample.get("explicitEnd")
-            or total_reached
-            or (
-                last_scroll.get("found")
-                and last_scroll.get("atEnd")
-                and not last_scroll.get("loadMoreClicked")
-                and not sample.get("loadMore")
-            )
-        )
-        if stable >= stable_rounds and end_confirmed and not loading:
-            completed = True
-            completion_reason = (
-                "explicit-empty" if explicit_empty else
-                "explicit-end" if sample.get("explicitEnd") else
-                "known-total" if total_reached else
-                "stable-scroll-end"
-            )
-            break
-        if round_index + 1 < max_rounds:
-            page.wait_for_timeout(poll_ms)
+        stable = 0
+        previous = -1
+        for _ in range(max_rounds):
+            _check_project_page_state(page, project_id, project_url)
+            evidence.drain()
             sample = _project_sample(page)
-
-    if not recognized or not project_name:
-        raise PageStructureChanged(
-            "Could not recognize the ChatGPT project conversation list and name."
+            name = str(sample.get("name") or name)
+            for payload in evidence.pages.values():
+                for item in payload["items"]:
+                    identifier = item["id"]
+                    discovered[identifier] = ProjectChat(
+                        identifier,
+                        f"https://chatgpt.com/g/{project_id}/c/{identifier}",
+                        str(item.get("title") or "Untitled conversation"),
+                    )
+            chain = evidence.chain()
+            ready = (
+                chain is not None
+                and _project_ui_ready(sample)
+                and not sample.get("loading")
+            )
+            stable = (
+                stable + 1 if ready and previous == evidence.revision else int(ready)
+            )
+            previous = evidence.revision
+            if stable >= stable_rounds:
+                return ProjectDiscovery(
+                    project_id,
+                    project_url,
+                    name,
+                    tuple(discovered.values()),
+                    True,
+                    "Verified initial request through cursor:null; all bodies parsed.",
+                )
+            _scroll_project_region(page)
+            page.wait_for_timeout(poll_ms)
+        return ProjectDiscovery(
+            project_id,
+            project_url,
+            name,
+            tuple(discovered.values()),
+            False,
+            "Project pagination remains partial; terminal connected response not verified.",
         )
-    diagnostic = None
-    if not completed:
-        diagnostic = (
-            "Project conversation discovery remained partial after bounded traversal; "
-            f"collected {len(discovered)} unique chat IDs. "
-            f"Last scroll state: {dict(last_scroll)!r}"
-        )
-    elif completion_reason:
-        diagnostic = f"Discovery completed by {completion_reason}."
-    return ProjectDiscovery(
-        project_id,
-        project_url,
-        project_name,
-        tuple(discovered.values()),
-        completed,
-        diagnostic,
-    )
 
 
 def pair_messages(messages: Iterable[Mapping[str, Any]]) -> tuple[QAPair, ...]:
@@ -707,6 +638,8 @@ _CONVERSATION_SCRIPT = r"""
       const content = clone.querySelector(".markdown") || clone;
       return {
         turnId: stableTurnId(turn, roleNode, index, roleNodes.length),
+        messageId: roleNode.getAttribute("data-message-id")
+          || roleNode.querySelector("[data-message-id]")?.getAttribute("data-message-id") || "",
         role: roleNode.getAttribute("data-message-author-role"),
         markdown: clean(render(content)),
         attachments
@@ -861,9 +794,9 @@ _IMAGE_MARKDOWN = re.compile(r"!\[[^\]]*\]\([^\s)]+(?:\s+[^)]*)?\)")
 
 def _normalize_conversation_messages(
     messages: Iterable[Mapping[str, Any]],
-) -> tuple[dict[str, str], ...]:
+) -> tuple[dict[str, Any], ...]:
     """Add placeholders only when the DOM reported concrete attachment evidence."""
-    normalized: list[dict[str, str]] = []
+    normalized: list[dict[str, Any]] = []
     seen_ids: dict[str, tuple[str, str]] = {}
     for message in messages:
         if message.get("auxiliary"):
@@ -897,210 +830,188 @@ def _normalize_conversation_messages(
             raise ConversationStructureError(
                 f"Conversation message identity {turn_id!r} was rendered with conflicting content."
             )
-        if normalized and not turn_id and not normalized[-1]["turnId"] and (
-            normalized[-1]["role"], normalized[-1]["markdown"]
-        ) == identity:
+        if (
+            normalized
+            and not turn_id
+            and not normalized[-1]["turnId"]
+            and (normalized[-1]["role"], normalized[-1]["markdown"]) == identity
+        ):
             continue
         if turn_id:
             seen_ids[turn_id] = identity
-        normalized.append({"turnId": turn_id, "role": role, "markdown": markdown})
+        normalized.append(
+            {
+                "turnId": turn_id,
+                "messageId": str(message.get("messageId") or ""),
+                "role": role,
+                "markdown": markdown,
+                "attachments": list(message.get("attachments") or ()),
+            }
+        )
     return tuple(normalized)
 
 
-def _message_history_identity(message: Mapping[str, Any]) -> tuple[str, ...]:
-    turn_id = str(message.get("turnId") or "").strip()
-    role = str(message.get("role") or "")
-    markdown = str(message.get("markdown") or "")
-    return ("id", turn_id, role, markdown) if turn_id else ("content", role, markdown)
-
-
-def _history_fingerprint(
-    sample: Mapping[str, Any],
-    messages: tuple[dict[str, str], ...],
-    scroll_state: Mapping[str, Any],
-) -> tuple[Any, ...]:
-    identities = tuple(_message_history_identity(message) for message in messages)
-    first = identities[0] if identities else ()
-    last = identities[-1] if identities else ()
-    return (
-        int(sample.get("turnCount") or len(messages)),
-        first,
-        str(messages[0].get("role") or "") if messages else "",
-        last,
-        str(messages[-1].get("role") or "") if messages else "",
-        int(float(scroll_state.get("after") or 0)),
-        int(float(scroll_state.get("scrollHeight") or 0)),
-        int(sample.get("invalidTurns") or 0),
-        identities,
-    )
-
-
-def _stable_turn_ids(messages: tuple[dict[str, str], ...]) -> tuple[str, ...] | None:
-    identifiers = tuple(message["turnId"] for message in messages)
-    if not identifiers or any(not identifier for identifier in identifiers):
+def _verify_network_messages(evidence, accumulated):
+    nodes = evidence.ordered_nodes()
+    if nodes is None:
         return None
-    return identifiers if len(set(identifiers)) == len(identifiers) else None
-
-
-def _merge_identified_history(
-    existing: tuple[dict[str, str], ...],
-    current: tuple[dict[str, str], ...],
-) -> tuple[dict[str, str], ...]:
-    existing_ids = _stable_turn_ids(existing)
-    current_ids = _stable_turn_ids(current)
-    if existing_ids is None or current_ids is None:
-        raise ConversationHistoryIncomplete(
-            "Virtualized conversation turns did not expose stable unique identities."
-        )
-    existing_by_id = dict(zip(existing_ids, existing))
-    current_by_id = dict(zip(current_ids, current))
-    shared_current = [identifier for identifier in current_ids if identifier in existing_by_id]
-    shared_existing = [identifier for identifier in existing_ids if identifier in current_by_id]
-    if not shared_current or shared_current != shared_existing:
-        raise ConversationHistoryIncomplete(
-            "Conversation history windows could not be merged without guessing turn order."
-        )
-    for identifier in shared_current:
-        old = existing_by_id[identifier]
-        new = current_by_id[identifier]
-        if old["role"] != new["role"]:
-            raise ConversationHistoryIncomplete(
-                "A conversation turn identity changed role while history was loading."
+    visible = []
+    hidden = []
+    network_ids = set()
+    for node in nodes:
+        message = node.get("message")
+        if message is None:
+            continue  # Structural mapping node, not a message.
+        identifier = message["id"]
+        network_ids.add(identifier)
+        role = message["author"].get("role")
+        metadata = message.get("metadata") or {}
+        if role == "assistant" and message.get("status") != "finished_successfully":
+            evidence.fail(f"Assistant message {identifier} is not confirmed finished.")
+        if (
+            role in {"system", "tool", "developer"}
+            or metadata.get("is_visually_hidden_from_conversation") is True
+        ):
+            hidden.append(
+                {
+                    "id": identifier,
+                    "reason": "non-UI role or explicit hidden metadata",
+                    "source": message,
+                }
             )
-
-    merged: list[dict[str, str]] = []
-    existing_index = 0
-    current_index = 0
-    for identifier in shared_current:
-        next_existing = existing_ids.index(identifier, existing_index)
-        next_current = current_ids.index(identifier, current_index)
-        existing_gap = existing[existing_index:next_existing]
-        current_gap = current[current_index:next_current]
-        if existing_gap and current_gap:
-            raise ConversationHistoryIncomplete(
-                "Conversation history windows contained an ambiguous gap between turns."
+            continue
+        if role not in {"user", "assistant"}:
+            evidence.fail(f"Unclassified message role for {identifier}.")
+        dom = accumulated.get(identifier)
+        if dom is None or dom["role"] != role or not dom["markdown"]:
+            return None
+        content = message["content"]
+        parts = content.get("parts")
+        if content.get("content_type") not in {
+            "text",
+            "multimodal_text",
+        } or not isinstance(parts, list):
+            # Preserve source, but an unknown UI representation is not completion evidence.
+            evidence.fail(
+                f"Message {identifier} content type requires explicit UI verification support."
             )
-        merged.extend(current_gap or existing_gap)
-        merged.append(current_by_id[identifier])
-        existing_index = next_existing + 1
-        current_index = next_current + 1
-    existing_tail = existing[existing_index:]
-    current_tail = current[current_index:]
-    if existing_tail and current_tail:
-        raise ConversationHistoryIncomplete(
-            "Conversation history windows contained an ambiguous trailing gap."
+        images = [part for part in parts if isinstance(part, dict)]
+        if any(not isinstance(part, (str, dict)) for part in parts) or any(
+            part.get("content_type") != "image_asset_pointer"
+            or not part.get("asset_pointer")
+            for part in images
+        ):
+            evidence.fail(f"Message {identifier} has unclassified content parts.")
+        attachments = dom.get("attachments") or []
+        if len([item for item in attachments if item.get("kind") == "image"]) != len(
+            images
+        ):
+            return None
+        files = metadata.get("attachments") or []
+        if not isinstance(files, list) or any(
+            not isinstance(item, dict) or not item.get("name") for item in files
+        ):
+            evidence.fail(f"Message {identifier} has unclassified file attachments.")
+        if sorted(item["name"] for item in files) != sorted(
+            item.get("name", "") for item in attachments if item.get("kind") == "file"
+        ):
+            return None
+        source_text = "\n\n".join(
+            part for part in parts if isinstance(part, str)
+        ).strip()
+        rendered_text = dom["markdown"]
+        if images:
+            rendered_text = _IMAGE_MARKDOWN.sub("", rendered_text).replace(
+                "[Image attachment]", ""
+            )
+        for item in files:
+            name = str(item["name"]).replace("[", r"\[").replace("]", r"\]")
+            rendered_text = rendered_text.replace(f"[Attachment: {name}]", "")
+
+        # Markdown is generated by the existing DOM converter; compare text tokens
+        # after formatting/whitespace normalization, and retain exact source as well.
+        def canonical(value):
+            return re.sub(r"[\s`*_#>|\\]+", "", value)
+
+        if canonical(source_text) != canonical(rendered_text):
+            return None
+        visible.append({**dom, "id": identifier, "source": message})
+    if set(accumulated) - network_ids:
+        evidence.fail(
+            "DOM contains message UUIDs absent from the completed response chain."
         )
-    merged.extend(current_tail or existing_tail)
-    return tuple(merged)
-
-
-def _contains_message_sequence(
-    larger: tuple[dict[str, str], ...], smaller: tuple[dict[str, str], ...]
-) -> bool:
-    if len(smaller) > len(larger):
-        return False
-    smaller_keys = tuple(_message_history_identity(message) for message in smaller)
-    larger_keys = tuple(_message_history_identity(message) for message in larger)
-    return any(
-        larger_keys[index : index + len(smaller_keys)] == smaller_keys
-        for index in range(len(larger_keys) - len(smaller_keys) + 1)
-    )
-
-
-def _merge_history_messages(
-    existing: tuple[dict[str, str], ...],
-    current: tuple[dict[str, str], ...],
-) -> tuple[dict[str, str], ...]:
-    if not existing:
-        return current
-    if not current:
-        return existing
-    if _stable_turn_ids(existing) is not None and _stable_turn_ids(current) is not None:
-        return _merge_identified_history(existing, current)
-    if _contains_message_sequence(current, existing):
-        return current
-    if _contains_message_sequence(existing, current):
-        return existing
-    raise ConversationHistoryIncomplete(
-        "Virtualized conversation history changed without stable turn identities."
-    )
+    # A branched mapping cannot safely be linearized as QA. Require a single
+    # visible ancestry; explicitly hidden/tool messages may occur between turns.
+    by_id = {node["id"]: node for node in nodes}
+    previous = None
+    for message in visible:
+        parent = by_id[message["id"]]["parent"]
+        # Stop at the prior visible message: linear even for very long histories.
+        while parent is not None and parent != previous:
+            parent = by_id[parent]["parent"]
+        if previous is not None and parent != previous:
+            evidence.fail(
+                "Visible message branches cannot be verified as one conversation sequence."
+            )
+        previous = message["id"]
+    return tuple(visible), tuple(hidden)
 
 
 def _hydrate_conversation_history(
-    page: Any,
-    *,
-    stable_rounds: int,
-    max_rounds: int,
-    poll_ms: int,
-) -> Mapping[str, Any] | None:
-    """Load older turns at the real scroll top before strict QA pairing."""
-    previous: tuple[Any, ...] | None = None
+    page, evidence, *, stable_rounds, max_rounds, poll_ms
+):
+    accumulated: dict[str, dict] = {}
+    previous = None
     stable = 0
-    accumulated: tuple[dict[str, str], ...] = ()
-    recognized_seen = False
-    last_sample: Mapping[str, Any] = {}
-    for round_index in range(max_rounds):
+    saw_generation = False
+    sample = {}
+    for _ in range(max_rounds):
         if login_or_challenge_visible(page) or "/auth/" in getattr(page, "url", ""):
             raise LoginRequired(
                 "ChatGPT authentication is required to read the conversation."
             )
+        evidence.drain()
         if generation_in_progress(page):
-            return None
-        sample = _conversation_sample(page)
-        last_sample = sample
-        loading = bool(sample.get("loading"))
-        recognized_seen = recognized_seen or bool(sample.get("recognized"))
-        if sample.get("recognized") and not loading:
-            messages = _normalize_conversation_messages(sample.get("messages") or ())
-            if not sample.get("invalidTurns"):
-                accumulated = _merge_history_messages(accumulated, messages)
-            if sample.get("explicitEmpty") and not messages:
-                scroll_state: Mapping[str, Any] = {
-                    "found": True,
-                    "wasAtTop": True,
-                    "atTop": True,
-                    "after": 0,
-                    "scrollHeight": 0,
-                }
-            else:
-                scroll_state = _scroll_conversation_history_to_top(page)
-            fingerprint = _history_fingerprint(sample, messages, scroll_state)
-            at_stable_top = bool(
-                scroll_state.get("found")
-                and scroll_state.get("wasAtTop")
-                and scroll_state.get("atTop")
-            )
-            has_complete_shape = bool(messages or sample.get("explicitEmpty"))
-            if at_stable_top and has_complete_shape:
-                stable = stable + 1 if fingerprint == previous else 1
-            else:
-                stable = 0
-            previous = fingerprint
-            if stable >= stable_rounds:
-                if generation_in_progress(page):
-                    return None
-                if sample.get("invalidTurns"):
-                    raise ConversationStructureError(
-                        "A rendered conversation turn contained unclassified content "
-                        "without a supported user or assistant role: "
-                        f"{sample.get('invalidTurnDetails') or sample.get('invalidTurns')}"
-                    )
-                complete = dict(sample)
-                complete["messages"] = accumulated
-                complete["turnCount"] = len(accumulated)
-                return complete
-        if round_index + 1 < max_rounds:
+            saw_generation = True
+            stable = 0
             page.wait_for_timeout(poll_ms)
-    if not recognized_seen or bool(last_sample.get("loading")):
-        return {
-            "_status": "unknown",
-            "_diagnostic": (
-                "Conversation loading did not reach a recognized, non-loading state "
-                f"within {max_rounds} samples."
-            ),
-        }
+            continue
+        if saw_generation:
+            # The initial GET may contain a partial response. Restart this same
+            # chat after generation stops to obtain fresh authoritative evidence.
+            raise ConversationLoadingUnknown(
+                "Generation stopped; reload this chat to verify the final response."
+            )
+        sample = _conversation_sample(page)
+        messages = _normalize_conversation_messages(sample.get("messages") or ())
+        window = {}
+        for message in messages:
+            identifier = message["messageId"]
+            if not identifier:
+                raise ConversationHistoryIncomplete(
+                    "DOM message has no network-comparable message UUID."
+                )
+            if identifier in window and window[identifier] != message:
+                raise ConversationHistoryIncomplete(
+                    "DOM window has conflicting content for one message UUID."
+                )
+            window[identifier] = message
+            accumulated[identifier] = message
+        verified = _verify_network_messages(evidence, accumulated)
+        fingerprint = (evidence.revision, repr(verified))
+        ready = (
+            verified is not None
+            and not sample.get("loading")
+            and not sample.get("invalidTurns")
+        )
+        stable = stable + 1 if ready and fingerprint == previous else int(ready)
+        previous = fingerprint
+        if stable >= stable_rounds:
+            return {**sample, "messages": verified[0], "non_ui_messages": verified[1]}
+        _scroll_conversation_history_to_top(page)
+        page.wait_for_timeout(poll_ms)
     raise ConversationHistoryIncomplete(
-        "The rendered conversation history did not form a stable, complete window before the scan limit."
+        "Conversation remains pending: terminal page, pending bodies, generation, or message content not verified."
     )
 
 
@@ -1108,62 +1019,51 @@ def read_conversation(
     page: Any,
     chat: ProjectChat,
     *,
-    stable_rounds: int = 2,
-    max_rounds: int = 50,
+    stable_rounds: int = 3,
+    max_rounds: int = 3000,
     poll_ms: int = DOM_POLL_MS,
 ) -> ConversationSnapshot:
-    """Open one chat, skip active generation, and extract complete QA pairs."""
-    try:
-        page.goto(
-            chat.chat_url, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT_MS
+    """Install CDP monitoring before navigation; no DOM-only completion fallback."""
+    if stable_rounds < 1 or max_rounds < 1 or poll_ms < 0:
+        raise ValueError("Polling limits must be positive (poll_ms may be zero).")
+    with PaginationEvidence("conversation", chat.chat_id).start(page) as evidence:
+        try:
+            page.goto(
+                chat.chat_url,
+                wait_until="domcontentloaded",
+                timeout=PAGE_LOAD_TIMEOUT_MS,
+            )
+        except Exception as exc:
+            raise ConversationLoadingUnknown(
+                f"Could not load conversation {chat.chat_id}: {exc}"
+            ) from exc
+        if login_or_challenge_visible(page) or "/auth/" in getattr(page, "url", ""):
+            raise LoginRequired(
+                "ChatGPT authentication is required to read the conversation."
+            )
+        try:
+            loaded_url = validate_chat_url(getattr(page, "url", chat.chat_url))
+        except InvalidChatUrl as exc:
+            raise ProjectAccessFailed(
+                "Conversation redirected away from its page."
+            ) from exc
+        if extract_chat_id(loaded_url) != chat.chat_id:
+            raise ProjectAccessFailed(
+                "Conversation redirected to a different conversation."
+            )
+        complete = _hydrate_conversation_history(
+            page,
+            evidence,
+            stable_rounds=stable_rounds,
+            max_rounds=max_rounds,
+            poll_ms=poll_ms,
         )
-    except Exception as exc:
-        raise ConversationLoadingUnknown(
-            f"Could not load conversation {chat.chat_id}: {exc}"
-        ) from exc
-    if login_or_challenge_visible(page) or "/auth/" in getattr(page, "url", ""):
-        raise LoginRequired(
-            "ChatGPT authentication is required to read the conversation."
-        )
-    try:
-        loaded_url = validate_chat_url(getattr(page, "url", chat.chat_url))
-    except InvalidChatUrl as exc:
-        raise ProjectAccessFailed(
-            f"Conversation {chat.chat_id} redirected away from a conversation page."
-        ) from exc
-    if extract_chat_id(loaded_url) != chat.chat_id:
-        raise ProjectAccessFailed(
-            f"Conversation {chat.chat_id} redirected to a different conversation."
-        )
-
-    complete = _hydrate_conversation_history(
-        page,
-        stable_rounds=stable_rounds,
-        max_rounds=max_rounds,
-        poll_ms=poll_ms,
-    )
-    if complete is None:
-        return ConversationSnapshot(
-            chat.chat_id, chat.chat_url, chat.title, (), True, "generating",
-            "A supported stop-generation control was visible."
-        )
-    if complete.get("_status") == "unknown":
+        messages = complete["messages"]
         return ConversationSnapshot(
             chat.chat_id,
-            chat.chat_url,
-            chat.title,
-            (),
-            False,
-            "unknown",
-            str(complete.get("_diagnostic") or "Conversation readiness was unknown."),
+            loaded_url,
+            str(complete.get("title") or chat.title),
+            pair_messages(messages),
+            messages=messages,
+            non_ui_messages=complete["non_ui_messages"],
         )
-    title = str(complete.get("title") or chat.title).strip() or chat.title
-    return ConversationSnapshot(
-        chat.chat_id,
-        validate_chat_url(getattr(page, "url", chat.chat_url)),
-        title,
-        pair_messages(complete.get("messages") or ()),
-        False,
-        "complete",
-        None,
-    )

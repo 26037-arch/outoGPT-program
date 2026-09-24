@@ -53,7 +53,15 @@ to Python. The default output is `~/.outogpt/ChatGPT/<sanitized-project-name>/`,
 `index.md`, and `chats/<chat-id>.md`. One browser session and one reusable page are
 used for the entire sequential update; no Chrome process is started per chat.
 
-Only complete user/assistant QA pairs are persisted. Generating chats and trailing
-unanswered user messages are skipped without blocking other chats. Repeated updates
-are idempotent by completed-pair count. Content edits or regenerated answers with an
-unchanged pair count are intentionally outside this updater's detection model.
+The updater verifies network pagination and every observed message before saving.
+Loading or generation errors retry the same chat and then pause the entire update;
+no later chat is visited. Rerun the command to resume from `update-progress.json`.
+
+Each MD preserves existing bytes and appends a content-verified revision when the
+conversation changes, including edits with unchanged QA counts. Unanswered user
+messages and explicitly non-UI messages are preserved in the same file. Completion
+in `project.json` is recorded only after the actual file contents are read back and
+verified. Unknown response formats or unverifiable messages remain pending.
+
+See the repository README and `outputs/preservation-report.md` for the completion
+contract, supported evidence, test commands, and live-validation limitations.

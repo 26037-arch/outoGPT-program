@@ -132,48 +132,45 @@ class ProjectUpdaterTests(unittest.TestCase):
         state, directory = self.state()
         self.assertEqual(state["chats"]["a"]["qa_count"], 4)
         markdown = (directory / "chats" / "a.md").read_text(encoding="utf-8")
-        self.assertEqual(markdown.count("## Q"), 4)
+        self.assertEqual(
+            markdown.count("## Q"), 7
+        )  # 1, 2, and 4-pair immutable revisions
 
-    def test_current_count_below_saved_count_does_nothing(self):
+    def test_count_regression_preserves_old_bytes_as_revision(self):
         self.update({"a": conversation("a", 3)})
         _, directory = self.state()
-        path = directory / "chats" / "a.md"
-        original = path.read_bytes()
-        state_path = directory / "project.json"
-        original_state = state_path.read_bytes()
+        path = directory / "chats/a.md"
+        before = path.read_bytes()
         result = self.update({"a": conversation("a", 2)})
-        state, _ = self.state()
-        self.assertEqual(result.unchanged_chats, 1)
-        self.assertEqual(state["chats"]["a"]["qa_count"], 3)
-        self.assertEqual(path.read_bytes(), original)
-        self.assertEqual(state_path.read_bytes(), original_state)
-
-    def test_generating_chat_is_skipped_while_other_chat_updates(self):
-        self.update({"a": conversation("a", 1), "b": conversation("b", 1)})
-        result = self.update(
-            {
-                "a": conversation("a", 2, generating=True),
-                "b": conversation("b", 2),
-            }
-        )
-        state, _ = self.state()
-        self.assertEqual(result.skipped_generating_chats, 1)
+        self.assertTrue(result.ok)
         self.assertEqual(result.updated_chats, 1)
-        self.assertEqual(state["chats"]["a"]["qa_count"], 1)
-        self.assertEqual(state["chats"]["b"]["qa_count"], 2)
+        self.assertTrue(path.read_bytes().startswith(before))
+        self.assertEqual(self.state()[0]["chats"]["a"]["qa_count"], 2)
 
-    def test_new_generating_and_empty_chats_are_not_registered(self):
+    def test_generating_chat_pauses_before_next_chat(self):
+        self.update({"a": conversation("a", 1), "b": conversation("b", 1)})
+        browser = FakeBrowser(
+            {"a": conversation("a", 2, generating=True), "b": conversation("b", 2)}
+        )
+        result = ProjectUpdater(browser, self.root).update(PROJECT_URL)
+        self.assertTrue(result.paused)
+        self.assertEqual(result.pending_chat_id, "a")
+        self.assertEqual(browser.read_ids, ["a", "a", "a"])
+        self.assertEqual(result.skipped_generating_chats, 0)
+        self.assertEqual(self.state()[0]["chats"]["b"]["qa_count"], 1)
+
+    def test_verified_empty_chat_is_saved_but_generating_chat_is_pending(self):
         result = self.update(
             {
-                "a": conversation("a", 1, generating=True),
-                "b": conversation("b", 0),
+                "empty": conversation("empty", 0),
+                "active": conversation("active", 0, generating=True),
             }
         )
         state, directory = self.state()
-        self.assertEqual(result.skipped_generating_chats, 1)
-        self.assertEqual(result.skipped_empty_chats, 1)
-        self.assertEqual(state["chats"], {})
-        self.assertFalse((directory / "chats" / "a.md").exists())
+        self.assertTrue(result.paused)
+        self.assertIn("empty", state["chats"])
+        self.assertNotIn("active", state["chats"])
+        self.assertTrue((directory / "chats/empty.md").is_file())
 
     def test_state_advances_only_after_markdown_append_succeeds(self):
         self.update({"a": conversation("a", 1)})
@@ -186,7 +183,7 @@ class ProjectUpdaterTests(unittest.TestCase):
         def fail_append(*args, **kwargs):
             raise MarkdownArchiveError("disk full")
 
-        archive.append_pairs = fail_append
+        archive.sync_snapshot = fail_append
         updater = ProjectUpdater(
             FakeBrowser({"a": conversation("a", 2)}),
             self.root,
@@ -198,19 +195,16 @@ class ProjectUpdaterTests(unittest.TestCase):
         self.assertEqual(state["chats"]["a"]["qa_count"], 1)
         self.assertEqual(path.read_bytes(), original)
 
-    def test_completed_append_is_recovered_if_state_write_was_interrupted(self):
+    def test_saved_snapshot_is_recovered_if_state_write_was_interrupted(self):
         self.update({"a": conversation("a", 1)})
-        archive = ProjectArchive.open(
-            self.root, "g-p-project", "테스트 프로젝트", PROJECT_URL
-        )
-        archive.append_pairs("a", [QAPair("question 2", "answer 2")], 2)
-
+        archive = ProjectArchive.open(self.root, "g-p-project", "Project", PROJECT_URL)
+        archive.sync_snapshot(conversation("a", 2))
+        before = archive.chat_path("a").read_bytes()
         result = self.update({"a": conversation("a", 2)})
-        state, directory = self.state()
-        markdown = (directory / "chats" / "a.md").read_text(encoding="utf-8")
+        self.assertTrue(result.ok)
         self.assertEqual(result.qa_pairs_appended, 0)
-        self.assertEqual(state["chats"]["a"]["qa_count"], 2)
-        self.assertEqual(markdown.count("## Q"), 2)
+        self.assertEqual(self.state()[0]["chats"]["a"]["qa_count"], 2)
+        self.assertEqual(archive.chat_path("a").read_bytes(), before)
 
     def test_atomic_replace_failure_preserves_prior_markdown_and_success_counters(self):
         self.update({"a": conversation("a", 1)})
@@ -231,19 +225,20 @@ class ProjectUpdaterTests(unittest.TestCase):
         self.assertEqual(result.failed_chats, 1)
         self.assertEqual(path.read_bytes(), original)
 
-    def test_partial_discovery_saves_independent_chats_but_reports_incomplete(self):
+    def test_partial_discovery_is_checkpointed_without_reading_chats(self):
         browser = FakeBrowser(
             {"good": conversation("good", 1)}, discovery_complete=False
         )
         result = ProjectUpdater(browser, self.root).update(PROJECT_URL)
-        state, _ = self.state()
-        self.assertFalse(result.ok)
-        self.assertFalse(result.discovery_complete)
-        self.assertEqual(result.discovered_chats, 1)
-        self.assertEqual(result.saved_chats, 1)
-        self.assertEqual(result.new_chats, 1)
-        self.assertIn("good", state["chats"])
-        self.assertEqual(result.errors[0]["code"], "PROJECT_DISCOVERY_INCOMPLETE")
+        state, directory = self.state()
+        self.assertTrue(result.paused)
+        self.assertEqual(browser.read_ids, [])
+        self.assertEqual(state["chats"], {})
+        progress = json.loads(
+            (directory / "update-progress.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(progress["stage"], "discovery")
+        self.assertEqual(progress["discovered"][0]["chat_id"], "good")
 
     def test_unknown_loading_is_pending_not_failed_or_saved(self):
         unknown = ConversationSnapshot(
@@ -260,11 +255,13 @@ class ProjectUpdaterTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(result.pending_unknown_loading_chats, 1)
         self.assertEqual(result.failed_chats, 0)
-        self.assertEqual(result.saved_chats, 1)
+        self.assertEqual(result.saved_chats, 0)
         self.assertNotIn("pending", state["chats"])
-        self.assertEqual(result.errors[0]["stage"], "readiness")
+        self.assertEqual(result.errors[0]["stage"], "extraction")
 
-    def test_orphan_markdown_from_failed_state_write_is_recovered_without_overwrite(self):
+    def test_orphan_markdown_from_failed_state_write_is_recovered_without_overwrite(
+        self,
+    ):
         self.update({"a": conversation("a", 2)})
         state, directory = self.state()
         path = directory / "chats" / "a.md"
@@ -282,19 +279,17 @@ class ProjectUpdaterTests(unittest.TestCase):
         self.assertEqual(recovered["chats"]["a"]["qa_count"], 2)
         self.assertEqual(path.read_bytes(), original)
 
-    def test_interrupted_unmarked_tail_is_removed_before_next_append(self):
+    def test_existing_unmarked_tail_is_preserved_before_new_revision(self):
         self.update({"a": conversation("a", 1)})
         _, directory = self.state()
-        path = directory / "chats" / "a.md"
+        path = directory / "chats/a.md"
         with path.open("a", encoding="utf-8", newline="\n") as stream:
             stream.write("\n## Q2\n\npartial interrupted write")
-
+        before = path.read_bytes()
         result = self.update({"a": conversation("a", 2)})
-        markdown = path.read_text(encoding="utf-8")
         self.assertTrue(result.ok)
-        self.assertNotIn("partial interrupted write", markdown)
-        self.assertEqual(markdown.count("<!-- outogpt-qa-end:"), 2)
-        self.assertEqual(markdown.count("## Q2"), 1)
+        self.assertTrue(path.read_bytes().startswith(before))
+        self.assertEqual(self.state()[0]["chats"]["a"]["qa_count"], 2)
 
     def test_fewer_markers_than_state_is_an_error_and_preserves_bytes(self):
         self.update({"a": conversation("a", 2)})
@@ -347,7 +342,9 @@ class ProjectUpdaterTests(unittest.TestCase):
         self.assertIn("g-p-second", second.directory.name)
 
     def test_project_directory_and_chat_file_names_are_windows_safe(self):
-        self.assertEqual(sanitize_component('bad<>:"/\\|?*name. ', "fallback"), "bad---------name")
+        self.assertEqual(
+            sanitize_component('bad<>:"/\\|?*name. ', "fallback"), "bad---------name"
+        )
         self.assertEqual(sanitize_component("CON.txt", "fallback"), "_CON.txt")
         archive = ProjectArchive.open(
             self.root, "g-p-safe", "Safe", "https://chatgpt.com/g/g-p-safe"
@@ -365,7 +362,7 @@ class ProjectUpdaterTests(unittest.TestCase):
         self.assertEqual(result.errors[0]["code"], "PAGE_STRUCTURE_CHANGED")
         self.assertEqual(state_path.read_bytes(), original)
 
-    def test_one_chat_extraction_error_does_not_stop_remaining_chats(self):
+    def test_extraction_error_retries_same_chat_and_stops_remaining_chats(self):
         browser = FakeBrowser(
             {
                 "bad": PageStructureChanged("bad messages"),
@@ -373,15 +370,15 @@ class ProjectUpdaterTests(unittest.TestCase):
             }
         )
         result = ProjectUpdater(browser, self.root).update(PROJECT_URL)
-        state, _ = self.state()
-        self.assertFalse(result.ok)
-        self.assertEqual(result.new_chats, 1)
-        self.assertEqual(result.saved_chats, 1)
-        self.assertEqual(result.failed_chats, 1)
-        self.assertEqual(result.qa_pairs_appended, 1)
-        self.assertEqual(result.errors[0]["stage"], "extraction")
-        self.assertIn("good", state["chats"])
-        self.assertNotIn("bad", state["chats"])
+        state, directory = self.state()
+        self.assertTrue(result.paused)
+        self.assertEqual(browser.read_ids, ["bad", "bad", "bad"])
+        self.assertEqual(result.saved_chats, 0)
+        self.assertEqual(state["chats"], {})
+        progress = json.loads(
+            (directory / "update-progress.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(progress["pending_chat_id"], "bad")
 
     def test_unicode_code_blocks_and_multiline_answers_survive(self):
         snapshot = ConversationSnapshot(
