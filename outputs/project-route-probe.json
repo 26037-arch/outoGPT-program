@@ -1,0 +1,949 @@
+{
+  "kind": "project-route-probe",
+  "links": [
+    {
+      "path": "/g/g-p-6a05b25497848191b9c33977790eab63/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/g-p-69e511ce5ef88191a7590c49fa67edbb/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/g-p-69e36b524bac81918c75916e79d5fac7/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/g-p-69e36b524bac81918c75916e79d5fac7/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/g-p-6a05b25497848191b9c33977790eab63/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/g-p-6a05b25497848191b9c33977790eab63/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/g-p-6a05b25497848191b9c33977790eab63/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/{project_id}/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/{project_id}/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/{project_id}/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/{project_id}/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/{project_id}/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/{project_id}/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/{project_id}/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/{project_id}/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/{project_id}/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/{project_id}/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/{project_id}/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/{project_id}/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/{project_id}/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/{project_id}/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/{project_id}/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/{project_id}/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/{project_id}/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/{project_id}/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/{project_id}/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/{project_id}/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/{project_id}/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/{project_id}/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/{project_id}/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/{project_id}/c/{conversation_id}",
+      "visible": true
+    },
+    {
+      "path": "/g/{project_id}/c/{conversation_id}",
+      "visible": true
+    }
+  ],
+  "navigation": {
+    "target_path": "/g/{project_id}/c/{conversation_id}",
+    "loaded_path": "/g/{project_id}-gwajeyeongu1/c/{conversation_id}",
+    "conversation_requests": [
+      {
+        "request_id": "24388.307",
+        "method": "GET",
+        "path": "/backend-api/conversations",
+        "post_shape": null,
+        "status": 200,
+        "response_shape": {
+          "items": {
+            "type": "list",
+            "length": 20,
+            "item": {
+              "id": "str",
+              "title": "str",
+              "create_time": "str",
+              "update_time": "str",
+              "latest_assistant_turn_created_at": "NoneType",
+              "pinned_time": "NoneType",
+              "mapping": "NoneType",
+              "current_node": "NoneType",
+              "conversation_template_id": "str",
+              "gizmo_id": "str",
+              "is_archived": "bool",
+              "is_starred": "NoneType",
+              "is_temporary_chat": "bool",
+              "is_do_not_remember": "bool",
+              "memory_scope": "str",
+              "context_scopes": "NoneType",
+              "context_scopes_v2": {
+                "context_scopes": {
+                  "type": "list",
+                  "length": 1,
+                  "item": "dict"
+                }
+              },
+              "workspace_id": "NoneType",
+              "async_status": "NoneType",
+              "safe_urls": {
+                "type": "list",
+                "length": 0,
+                "item": null
+              },
+              "blocked_urls": {
+                "type": "list",
+                "length": 0,
+                "item": null
+              },
+              "conversation_origin": "NoneType",
+              "trial_conversation_type": "NoneType",
+              "is_automation_conversation": "bool",
+              "snippet": "NoneType",
+              "summary_metadata": "NoneType",
+              "sugar_item_id": "NoneType",
+              "sugar_item_visible": "bool"
+            }
+          },
+          "total": "int",
+          "limit": "int",
+          "offset": "int"
+        },
+        "conversation_pages": []
+      },
+      {
+        "request_id": "24388.308",
+        "method": "GET",
+        "path": "/backend-api/conversations",
+        "post_shape": null,
+        "status": 200,
+        "response_shape": {
+          "items": {
+            "type": "list",
+            "length": 20,
+            "item": {
+              "id": "str",
+              "title": "str",
+              "create_time": "str",
+              "update_time": "str",
+              "latest_assistant_turn_created_at": "NoneType",
+              "pinned_time": "NoneType",
+              "mapping": "NoneType",
+              "current_node": "NoneType",
+              "conversation_template_id": "NoneType",
+              "gizmo_id": "NoneType",
+              "is_archived": "bool",
+              "is_starred": "NoneType",
+              "is_temporary_chat": "bool",
+              "is_do_not_remember": "bool",
+              "memory_scope": "str",
+              "context_scopes": "NoneType",
+              "context_scopes_v2": {
+                "context_scopes": {
+                  "type": "list",
+                  "length": 1,
+                  "item": "dict"
+                }
+              },
+              "workspace_id": "NoneType",
+              "async_status": "NoneType",
+              "safe_urls": {
+                "type": "list",
+                "length": 0,
+                "item": null
+              },
+              "blocked_urls": {
+                "type": "list",
+                "length": 0,
+                "item": null
+              },
+              "conversation_origin": "str",
+              "trial_conversation_type": "NoneType",
+              "is_automation_conversation": "bool",
+              "snippet": "NoneType",
+              "summary_metadata": "NoneType",
+              "sugar_item_id": "NoneType",
+              "sugar_item_visible": "bool"
+            }
+          },
+          "total": "int",
+          "limit": "int",
+          "offset": "int"
+        },
+        "conversation_pages": []
+      },
+      {
+        "request_id": "24388.316",
+        "method": "POST",
+        "path": "/backend-api/conversations/batch",
+        "post_shape": {
+          "conversation_ids": {
+            "type": "list",
+            "length": 1,
+            "item": "str"
+          }
+        },
+        "status": 200,
+        "response_shape": {
+          "type": "list",
+          "length": 1,
+          "item": {
+            "id": "str",
+            "title": "str",
+            "create_time": "str",
+            "update_time": "str",
+            "latest_assistant_turn_created_at": "str",
+            "mapping": {
+              "type": "dict",
+              "length": 337,
+              "item": {
+                "id": "str",
+                "children": {
+                  "type": "list",
+                  "length": 1,
+                  "item": "str"
+                }
+              }
+            },
+            "current_node": "str",
+            "conversation_template_id": "str",
+            "gizmo_id": "str",
+            "is_archived": "bool",
+            "is_temporary_chat": "bool",
+            "is_do_not_remember": "bool",
+            "memory_scope": "str",
+            "context_scopes_v2": {
+              "context_scopes": {
+                "type": "list",
+                "length": 1,
+                "item": {
+                  "is_siloed": "bool",
+                  "scope_namespace": "str",
+                  "sub_scope": "NoneType",
+                  "key": "NoneType",
+                  "key_timestamp": "NoneType",
+                  "key_scoped_access_claim": "NoneType"
+                }
+              }
+            },
+            "safe_urls": {
+              "type": "list",
+              "length": 70,
+              "item": "str"
+            },
+            "blocked_urls": {
+              "type": "list",
+              "length": 0,
+              "item": null
+            },
+            "is_automation_conversation": "bool",
+            "sugar_item_visible": "bool"
+          }
+        },
+        "conversation_pages": []
+      },
+      {
+        "request_id": "24388.317",
+        "method": "POST",
+        "path": "/backend-api/conversation/init",
+        "post_shape": {
+          "conversation_id": "str",
+          "conversation_origin": "NoneType",
+          "gizmo_id": "NoneType",
+          "requested_default_model": "str",
+          "timezone": "str",
+          "timezone_offset_min": "int"
+        },
+        "status": null,
+        "response_shape": null
+      },
+      {
+        "request_id": "24388.320",
+        "method": "POST",
+        "path": "/backend-api/conversation/init",
+        "post_shape": {
+          "conversation_id": "str",
+          "conversation_origin": "NoneType",
+          "gizmo_id": "NoneType",
+          "requested_default_model": "str",
+          "system_hints": "NoneType",
+          "timezone": "str",
+          "timezone_offset_min": "int"
+        },
+        "status": null,
+        "response_shape": null
+      },
+      {
+        "request_id": "24388.322",
+        "method": "POST",
+        "path": "/backend-api/conversation/init",
+        "post_shape": {
+          "conversation_id": "str",
+          "conversation_origin": "NoneType",
+          "gizmo_id": "NoneType",
+          "requested_default_model": "str",
+          "timezone": "str",
+          "timezone_offset_min": "int"
+        },
+        "status": null,
+        "response_shape": null
+      },
+      {
+        "request_id": "24388.323",
+        "method": "POST",
+        "path": "/backend-api/conversation/init",
+        "post_shape": {
+          "conversation_id": "str",
+          "conversation_origin": "NoneType",
+          "gizmo_id": "NoneType",
+          "requested_default_model": "str",
+          "system_hints": "NoneType",
+          "timezone": "str",
+          "timezone_offset_min": "int"
+        },
+        "status": null,
+        "response_shape": null
+      },
+      {
+        "request_id": "24388.346",
+        "method": "POST",
+        "path": "/backend-api/conversation/init",
+        "post_shape": {
+          "conversation_id": "str",
+          "conversation_origin": "NoneType",
+          "gizmo_id": "str",
+          "requested_default_model": "str",
+          "timezone": "str",
+          "timezone_offset_min": "int"
+        },
+        "status": 200,
+        "response_shape": {
+          "type": "str",
+          "banner_info": "NoneType",
+          "blocked_features": {
+            "type": "list",
+            "length": 0,
+            "item": null
+          },
+          "model_limits": {
+            "type": "list",
+            "length": 0,
+            "item": null
+          },
+          "limits_progress": {
+            "type": "list",
+            "length": 4,
+            "item": {
+              "feature_name": "str",
+              "remaining": "int",
+              "reset_after": "str"
+            }
+          },
+          "default_model_slug": "str",
+          "intended_default_model_slug": "str",
+          "atlas_mode_enabled": "NoneType"
+        },
+        "conversation_pages": []
+      },
+      {
+        "request_id": "24388.348",
+        "method": "POST",
+        "path": "/backend-api/conversation/init",
+        "post_shape": {
+          "conversation_id": "str",
+          "conversation_origin": "NoneType",
+          "gizmo_id": "str",
+          "requested_default_model": "str",
+          "system_hints": "NoneType",
+          "timezone": "str",
+          "timezone_offset_min": "int"
+        },
+        "status": 200,
+        "response_shape": {
+          "type": "str",
+          "banner_info": "NoneType",
+          "blocked_features": {
+            "type": "list",
+            "length": 0,
+            "item": null
+          },
+          "model_limits": {
+            "type": "list",
+            "length": 0,
+            "item": null
+          },
+          "limits_progress": {
+            "type": "list",
+            "length": 4,
+            "item": {
+              "feature_name": "str",
+              "remaining": "int",
+              "reset_after": "str"
+            }
+          },
+          "default_model_slug": "str",
+          "intended_default_model_slug": "str",
+          "atlas_mode_enabled": "NoneType"
+        },
+        "conversation_pages": []
+      },
+      {
+        "request_id": "24388.351",
+        "method": "GET",
+        "path": "/backend-api/conversation/{conversation_id}/stream_status",
+        "post_shape": null,
+        "status": 200,
+        "response_shape": {
+          "status": "str"
+        },
+        "conversation_pages": []
+      },
+      {
+        "request_id": "24388.391",
+        "method": "POST",
+        "path": "/backend-api/conversation/init",
+        "post_shape": {
+          "conversation_id": "str",
+          "conversation_origin": "NoneType",
+          "gizmo_id": "str",
+          "requested_default_model": "str",
+          "system_hints": "NoneType",
+          "timezone": "str",
+          "timezone_offset_min": "int"
+        },
+        "status": 200,
+        "response_shape": {
+          "type": "str",
+          "banner_info": "NoneType",
+          "blocked_features": {
+            "type": "list",
+            "length": 0,
+            "item": null
+          },
+          "model_limits": {
+            "type": "list",
+            "length": 0,
+            "item": null
+          },
+          "limits_progress": {
+            "type": "list",
+            "length": 4,
+            "item": {
+              "feature_name": "str",
+              "remaining": "int",
+              "reset_after": "str"
+            }
+          },
+          "default_model_slug": "str",
+          "intended_default_model_slug": "str",
+          "atlas_mode_enabled": "NoneType"
+        },
+        "conversation_pages": []
+      },
+      {
+        "request_id": "24388.393",
+        "method": "GET",
+        "path": "/backend-api/conversations/{conversation_id}",
+        "post_shape": null,
+        "status": 200,
+        "response_shape": {
+          "type": "dict",
+          "length": 33,
+          "item": "str"
+        },
+        "conversation_pages": [
+          {
+            "message_count": 88,
+            "has_previous_page": true,
+            "has_start_cursor": true
+          }
+        ]
+      },
+      {
+        "request_id": "24388.396",
+        "method": "GET",
+        "path": "/backend-api/conversations/{conversation_id}",
+        "post_shape": null,
+        "status": 200,
+        "response_shape": {
+          "type": "dict",
+          "length": 33,
+          "item": "str"
+        },
+        "conversation_pages": [
+          {
+            "message_count": 88,
+            "has_previous_page": true,
+            "has_start_cursor": true
+          }
+        ]
+      },
+      {
+        "request_id": "24388.403",
+        "method": "GET",
+        "path": "/backend-api/conversations",
+        "post_shape": null,
+        "status": 200,
+        "response_shape": {
+          "items": {
+            "type": "list",
+            "length": 20,
+            "item": {
+              "id": "str",
+              "title": "str",
+              "create_time": "str",
+              "update_time": "str",
+              "latest_assistant_turn_created_at": "NoneType",
+              "pinned_time": "NoneType",
+              "mapping": "NoneType",
+              "current_node": "NoneType",
+              "conversation_template_id": "str",
+              "gizmo_id": "str",
+              "is_archived": "bool",
+              "is_starred": "NoneType",
+              "is_temporary_chat": "bool",
+              "is_do_not_remember": "bool",
+              "memory_scope": "str",
+              "context_scopes": "NoneType",
+              "context_scopes_v2": {
+                "context_scopes": {
+                  "type": "list",
+                  "length": 1,
+                  "item": "dict"
+                }
+              },
+              "workspace_id": "NoneType",
+              "async_status": "NoneType",
+              "safe_urls": {
+                "type": "list",
+                "length": 0,
+                "item": null
+              },
+              "blocked_urls": {
+                "type": "list",
+                "length": 0,
+                "item": null
+              },
+              "conversation_origin": "NoneType",
+              "trial_conversation_type": "NoneType",
+              "is_automation_conversation": "bool",
+              "snippet": "NoneType",
+              "summary_metadata": "NoneType",
+              "sugar_item_id": "NoneType",
+              "sugar_item_visible": "bool"
+            }
+          },
+          "total": "int",
+          "limit": "int",
+          "offset": "int"
+        },
+        "conversation_pages": []
+      },
+      {
+        "request_id": "24388.405",
+        "method": "POST",
+        "path": "/backend-api/conversations/batch",
+        "post_shape": {
+          "conversation_ids": {
+            "type": "list",
+            "length": 1,
+            "item": "str"
+          }
+        },
+        "status": 200,
+        "response_shape": {
+          "type": "list",
+          "length": 1,
+          "item": {
+            "id": "str",
+            "title": "str",
+            "create_time": "str",
+            "update_time": "str",
+            "latest_assistant_turn_created_at": "str",
+            "mapping": {
+              "type": "dict",
+              "length": 337,
+              "item": {
+                "id": "str",
+                "children": {
+                  "type": "list",
+                  "length": 1,
+                  "item": "str"
+                }
+              }
+            },
+            "current_node": "str",
+            "conversation_template_id": "str",
+            "gizmo_id": "str",
+            "is_archived": "bool",
+            "is_temporary_chat": "bool",
+            "is_do_not_remember": "bool",
+            "memory_scope": "str",
+            "context_scopes_v2": {
+              "context_scopes": {
+                "type": "list",
+                "length": 1,
+                "item": {
+                  "is_siloed": "bool",
+                  "scope_namespace": "str",
+                  "sub_scope": "NoneType",
+                  "key": "NoneType",
+                  "key_timestamp": "NoneType",
+                  "key_scoped_access_claim": "NoneType"
+                }
+              }
+            },
+            "safe_urls": {
+              "type": "list",
+              "length": 70,
+              "item": "str"
+            },
+            "blocked_urls": {
+              "type": "list",
+              "length": 0,
+              "item": null
+            },
+            "is_automation_conversation": "bool",
+            "sugar_item_visible": "bool"
+          }
+        },
+        "conversation_pages": []
+      }
+    ],
+    "article_count": 0,
+    "message_id_count": 0,
+    "identity_attributes": {
+      "data-turn-key": {
+        "count": 5,
+        "unique": 5,
+        "network_message_overlap": 5
+      },
+      "data-conversation-role": {
+        "count": 4,
+        "unique": 1,
+        "network_message_overlap": 0
+      },
+      "data-chatgpt-selection-message-id": {
+        "count": 4,
+        "unique": 4,
+        "network_message_overlap": 4
+      },
+      "data-sidebar-chatgpt-conversation-key": {
+        "count": 10,
+        "unique": 10,
+        "network_message_overlap": 0
+      }
+    },
+    "conversation_roles": [
+      "assistant"
+    ],
+    "turn_summary": [
+      {
+        "attributes": [
+          "class",
+          "data-turn-key"
+        ],
+        "conversationRoles": [
+          "assistant"
+        ],
+        "userBubbles": 0,
+        "agentStarts": 1,
+        "selectionIds": 1,
+        "virtualizedContents": 0,
+        "markdownNodes": 0,
+        "textLength": 211
+      },
+      {
+        "attributes": [
+          "class",
+          "data-turn-key"
+        ],
+        "conversationRoles": [
+          "assistant"
+        ],
+        "userBubbles": 1,
+        "agentStarts": 1,
+        "selectionIds": 1,
+        "virtualizedContents": 0,
+        "markdownNodes": 0,
+        "textLength": 18186
+      },
+      {
+        "attributes": [
+          "class",
+          "data-turn-key"
+        ],
+        "conversationRoles": [
+          "assistant"
+        ],
+        "userBubbles": 1,
+        "agentStarts": 1,
+        "selectionIds": 1,
+        "virtualizedContents": 0,
+        "markdownNodes": 0,
+        "textLength": 4542
+      },
+      {
+        "attributes": [
+          "class",
+          "data-turn-key"
+        ],
+        "conversationRoles": [
+          "assistant"
+        ],
+        "userBubbles": 1,
+        "agentStarts": 1,
+        "selectionIds": 1,
+        "virtualizedContents": 0,
+        "markdownNodes": 0,
+        "textLength": 4111
+      },
+      {
+        "attributes": [
+          "class",
+          "data-turn-key"
+        ],
+        "conversationRoles": [],
+        "userBubbles": 1,
+        "agentStarts": 1,
+        "selectionIds": 0,
+        "virtualizedContents": 0,
+        "markdownNodes": 0,
+        "textLength": 147
+      }
+    ],
+    "visible_mismatches": [
+      {
+        "role": "assistant",
+        "channel": "final",
+        "content_type": "text",
+        "parts": 1,
+        "source_chars": 15622,
+        "rendered_chars": 15467,
+        "source_in_rendered": false,
+        "rendered_in_source": false,
+        "semantic_equal": false,
+        "source_semantic_chars": 14772,
+        "rendered_semantic_chars": 14685,
+        "source_semantic_in_rendered": false,
+        "rendered_semantic_in_source": false,
+        "sequence_ratio": 0.997047,
+        "source_coverage": 0.99411,
+        "rendered_coverage": 1.0,
+        "fast_source_coverage": 0.99411,
+        "fast_rendered_coverage": 1.0,
+        "source_token_coverage": 0.97396,
+        "rendered_token_coverage": 0.980438,
+        "source_token_block_coverage": 0.993004,
+        "rendered_token_block_coverage": 0.999609
+      },
+      {
+        "role": "assistant",
+        "channel": "final",
+        "content_type": "text",
+        "parts": 1,
+        "source_chars": 3267,
+        "rendered_chars": 2628,
+        "source_in_rendered": false,
+        "rendered_in_source": false,
+        "semantic_equal": false,
+        "source_semantic_chars": 2887,
+        "rendered_semantic_chars": 2460,
+        "source_semantic_in_rendered": false,
+        "rendered_semantic_in_source": false,
+        "sequence_ratio": 0.916028,
+        "source_coverage": 0.848285,
+        "rendered_coverage": 0.995528,
+        "fast_source_coverage": 0.839972,
+        "fast_rendered_coverage": 0.985772,
+        "source_token_coverage": 0.071429,
+        "rendered_token_coverage": 0.083573,
+        "source_token_block_coverage": 0.794335,
+        "rendered_token_block_coverage": 0.929395
+      },
+      {
+        "role": "assistant",
+        "channel": "final",
+        "content_type": "text",
+        "parts": 1,
+        "source_chars": 3038,
+        "rendered_chars": 2692,
+        "source_in_rendered": false,
+        "rendered_in_source": false,
+        "semantic_equal": false,
+        "source_semantic_chars": 2715,
+        "rendered_semantic_chars": 2500,
+        "source_semantic_in_rendered": false,
+        "rendered_semantic_in_source": false,
+        "sequence_ratio": 0.958006,
+        "source_coverage": 0.920074,
+        "rendered_coverage": 0.9992,
+        "fast_source_coverage": 0.910497,
+        "fast_rendered_coverage": 0.9888,
+        "source_token_coverage": 0.002743,
+        "rendered_token_coverage": 0.00304,
+        "source_token_block_coverage": 0.836763,
+        "rendered_token_block_coverage": 0.927052
+      }
+    ],
+    "scroll_summary": [
+      {
+        "tag": "DIV",
+        "attributes": [
+          "data-app-action-timeline-scroll",
+          "class",
+          "role",
+          "style"
+        ],
+        "overflowY": "auto",
+        "flexDirection": "column-reverse",
+        "direction": "ltr",
+        "scrollTop": 0,
+        "scrollHeight": 24063,
+        "clientHeight": 945
+      }
+    ],
+    "dom": {
+      "textLength": 27539,
+      "mainCount": 1,
+      "iframeCount": 0,
+      "testids": [
+        "app-shell-header-context-menu-surface",
+        "chatgpt-writing-block",
+        "chatgpt-citation"
+      ],
+      "roles": [],
+      "messageAttributes": [
+        "data-chatgpt-project-conversation-drop-target",
+        "data-sidebar-chatgpt-conversation-key",
+        "data-thread-user-message-navigation-content",
+        "data-chatgpt-conversation-selection-target",
+        "data-turn-key",
+        "data-content-search-turn-key",
+        "data-chatgpt-search-message-ids",
+        "data-chatgpt-agent-turn-start",
+        "data-conversation-role",
+        "data-chatgpt-selection-conversation-id",
+        "data-chatgpt-selection-message-id",
+        "data-user-message-bubble",
+        "data-map-composer-conversation",
+        "data-above-composer-conversation-id"
+      ],
+      "classHints": [
+        "[&_[data-virtualized-turn-content]]:[content-visibility:visible]",
+        "group/user-message",
+        "group-focus-within/user-message:opacity-100",
+        "group-hover/user-message:opacity-100",
+        "turn-action-controls",
+        "bg-user-message",
+        "text-user-message",
+        "rich-text-user-turn",
+        "group-has-[[data-conversation-followup-reserved-hidden=true]]/thread-scroll-layout:top-6",
+        "group-has-[[data-in-progress-fixed-content]]/thread-scroll-layout:group-has-[[data-conversation-followup-reserved-hidden=true]]/thread-scroll-layout:top-6",
+        "has-[[data-conversation-followup-reserved-hidden=true]]:pointer-events-none"
+      ]
+    }
+  },
+  "error": null,
+  "discovery": {
+    "chat_count": 25,
+    "complete": true,
+    "diagnostic": "Verified initial request through cursor:null; all bodies parsed."
+  }
+}

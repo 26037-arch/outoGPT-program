@@ -19,6 +19,7 @@ from .errors import MarkdownArchiveError, ProjectStateError
 STATE_VERSION = 1
 _INVALID_COMPONENT = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _QA_END = re.compile(r"<!-- outogpt-qa-end:(\d+) -->")
+_CANONICAL_PROJECT_ID = re.compile(r"^(g-p-[0-9a-fA-F]{32})(?=-|$)")
 
 
 def sanitize_component(value: str, fallback: str) -> str:
@@ -36,6 +37,11 @@ def sanitize_component(value: str, fallback: str) -> str:
     }:
         cleaned = f"_{cleaned}"
     return cleaned[:120].rstrip(" .") or fallback
+
+
+def _canonical_project_id(value: str) -> str | None:
+    match = _CANONICAL_PROJECT_ID.match(value)
+    return match.group(1) if match else None
 
 
 def _atomic_text(path: Path, contents: str) -> None:
@@ -185,7 +191,7 @@ class ProjectArchive:
         if not re.fullmatch(r"g-p-[A-Za-z0-9_-]{1,128}", project_id):
             raise ProjectStateError("Refusing to use an unsafe project id.")
         desired_name = sanitize_component(project_name, project_id)
-        existing: tuple[Path, ProjectState] | None = None
+        matches: list[tuple[Path, ProjectState]] = []
         if root.is_dir():
             for state_path in sorted(root.glob("*/project.json")):
                 try:
@@ -200,15 +206,27 @@ class ProjectArchive:
                     raise ProjectStateError(
                         f"Could not safely read existing state: {state_path}"
                     ) from exc
-                if state.project_id == project_id:
-                    existing = (state_path.parent, state)
-                    break
+                if state.project_id == project_id or (
+                    _canonical_project_id(state.project_id) == project_id
+                ):
+                    matches.append((state_path.parent, state))
+
+        if len(matches) > 1:
+            locations = ", ".join(str(directory) for directory, _ in matches)
+            raise ProjectStateError(
+                "Multiple archive directories map to the canonical project ID; "
+                f"refusing to choose one: {locations}"
+            )
+        existing = matches[0] if matches else None
 
         if existing is not None:
             directory, state = existing
             metadata_changed = (
-                state.project_url != project_url or state.project_name != project_name
+                state.project_id != project_id
+                or state.project_url != project_url
+                or state.project_name != project_name
             )
+            state.project_id = project_id
             state.project_url = project_url
             state.project_name = project_name
             return cls(

@@ -39,7 +39,12 @@ class FakeController:
             error_message="failed",
         )
 
-    def update_project(self, project_url, *, archive_root):
+    def update_project(self, project_url, *, archive_root, progress=None):
+        if progress is not None:
+            progress(
+                "project_discovery",
+                {"requests": 2, "project_pages": 1, "pending": 0},
+            )
         result = ProjectUpdateResult(
             True,
             project_url,
@@ -208,6 +213,23 @@ class CliTests(unittest.TestCase):
         self.assertEqual(stderr, "")
         self.assertEqual(len(stdout.splitlines()), 1)
         self.assertEqual(json.loads(stdout)["errors"][0]["code"], "PAGE_STRUCTURE_CHANGED")
+
+    def test_project_debug_after_subcommand_keeps_json_machine_readable(self):
+        code, stdout, stderr = self.run_cli(
+            [
+                "project",
+                "update",
+                "--project-url",
+                "https://chatgpt.com/g/g-p-demo/project",
+                "--json",
+                "--debug",
+            ]
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(len(stdout.splitlines()), 1)
+        self.assertEqual(json.loads(stdout)["discovered_chats"], 2)
+        self.assertIn("debug: project_discovery", stderr)
+        self.assertIn('"requests": 2', stderr)
 
 
 if __name__ == "__main__":

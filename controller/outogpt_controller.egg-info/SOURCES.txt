@@ -18,6 +18,7 @@ outogpt_controller.egg-info/top_level.txt
 outogpt_controller/adapters/__init__.py
 outogpt_controller/adapters/archive.py
 outogpt_controller/adapters/browser.py
+tests/test_archive_recovery.py
 tests/test_browser_adapter.py
 tests/test_cli.py
 tests/test_controller.py

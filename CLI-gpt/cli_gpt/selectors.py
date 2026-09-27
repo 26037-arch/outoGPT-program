@@ -83,10 +83,13 @@ CONVERSATION_ROOTS = (
 CONVERSATION_TURNS = (
     'article[data-testid^="conversation-turn"]',
     '[data-testid^="conversation-turn"]',
+    "[data-turn-key]",
 )
 MESSAGE_ROLE_NODES = (
     '[data-message-author-role="user"]',
     '[data-message-author-role="assistant"]',
+    "[data-user-message-bubble]",
+    "[data-chatgpt-selection-message-id]",
 )
 MESSAGE_AUXILIARY_NODES = (
     '[data-message-author-role="tool"]',
@@ -121,6 +124,7 @@ MESSAGE_UI_EXCLUSIONS = (
     '[data-testid*="feedback" i]',
     '[data-testid*="reaction" i]',
     '[data-testid*="branch" i]',
+    '[data-testid="chatgpt-citation"]',
     '[aria-label*="branch" i]',
     '[aria-label*="previous response" i]',
     '[aria-label*="next response" i]',

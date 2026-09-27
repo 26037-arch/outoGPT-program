@@ -67,11 +67,11 @@ def extract_chat_id(chat_url: str) -> str:
     return chat_id
 
 
-def _error_details(error: Exception) -> tuple[str, str]:
+def _error_details(error: BaseException) -> tuple[str, str]:
     if isinstance(error, ControllerError):
         return error.code, str(error)
-    return ERROR_CODES.get(type(error).__name__, "CONTROLLER_INTERNAL_ERROR"), str(
-        error
+    return ERROR_CODES.get(type(error).__name__, "CONTROLLER_INTERNAL_ERROR"), (
+        str(error).strip() or type(error).__name__
     )
 
 
@@ -243,14 +243,17 @@ class OutogptController:
         project_url: str,
         *,
         archive_root: Path = DEFAULT_ARCHIVE_ROOT,
+        progress=None,
     ) -> ProjectUpdateResult:
         """Synchronize one project through one existing Chrome/CDP session."""
         browser = None
         try:
             browser = self.browser_factory()
             browser.open()
-            return ProjectUpdater(browser, archive_root).update(project_url)
-        except Exception as error:
+            return ProjectUpdater(
+                browser, archive_root, progress=progress
+            ).update(project_url)
+        except (Exception, KeyboardInterrupt) as error:
             result = ProjectUpdateResult(False, project_url)
             result.add_error(error)
             return result

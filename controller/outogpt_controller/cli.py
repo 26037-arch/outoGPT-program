@@ -87,6 +87,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Root directory for per-project Markdown archives (overrides saved configuration).",
     )
+    update.add_argument(
+        "--debug",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="Show project discovery, retry, and failure diagnostics on stderr.",
+    )
     _add_output_option(update)
     return parser
 
@@ -106,7 +112,13 @@ def _write(payload: dict[str, Any], as_json: bool) -> None:
         print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
         return
     if "discovered_chats" in payload:
-        print("status: completed" if payload.get("ok") else "status: paused" if payload.get("paused") else "status: failed")
+        print(
+            "status: completed"
+            if payload.get("ok")
+            else "status: paused"
+            if payload.get("paused")
+            else "status: failed"
+        )
         if payload.get("pending_chat_id"):
             print(f"pending_chat_id: {payload['pending_chat_id']}")
         print(f"project_url: {payload.get('project_url', '')}")
@@ -155,6 +167,14 @@ def main(
     raw_argv = list(argv) if argv is not None else sys.argv[1:]
     args = None
     json_requested = "--json" in raw_argv
+
+    def debug_progress(stage: str, details: dict[str, Any]) -> None:
+        print(
+            f"debug: {stage} "
+            + json.dumps(details, ensure_ascii=False, sort_keys=True, default=str),
+            file=sys.stderr,
+        )
+
     try:
         args = build_parser().parse_args(raw_argv)
         if args.group == "setup":
@@ -203,9 +223,10 @@ def main(
                     f"archive_root_source={archive_source} archive_root={archive_root}",
                     file=sys.stderr,
                 )
-            update_result = controller.update_project(
-                project_url, archive_root=archive_root
-            )
+            update_kwargs: dict[str, Any] = {"archive_root": archive_root}
+            if args.debug:
+                update_kwargs["progress"] = debug_progress
+            update_result = controller.update_project(project_url, **update_kwargs)
             update_result.archive_root = str(archive_root)
             update_result.archive_root_source = archive_source
             payload = update_result.to_dict()
@@ -214,6 +235,13 @@ def main(
                     f"archive_directory={payload['archive_directory']}",
                     file=sys.stderr,
                 )
+            if args.debug:
+                for error in payload.get("errors") or ():
+                    print(
+                        "debug: failure "
+                        + json.dumps(error, ensure_ascii=False, sort_keys=True),
+                        file=sys.stderr,
+                    )
         elif args.command == "create":
             payload = controller.create_chat(args.project_url, _prompt(args)).to_dict()
         elif args.command == "send":
@@ -222,7 +250,7 @@ def main(
             payload = controller.get_status(args.chat_id).to_dict()
         _write(payload, args.json)
         return 0 if payload["ok"] else 1
-    except Exception as error:
+    except (Exception, KeyboardInterrupt) as error:
         if args is not None and args.debug:
             traceback.print_exc(file=sys.stderr)
         code, message = _error_details(error)

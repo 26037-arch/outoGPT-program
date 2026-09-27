@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
+from types import TracebackType
 from typing import Any, Callable
 
 from cli_gpt.errors import (
@@ -32,6 +33,16 @@ PROJECT_ERROR_CODES = {
 }
 
 
+def _error_location(error: BaseException) -> str | None:
+    traceback_value: TracebackType | None = error.__traceback__
+    if traceback_value is None:
+        return None
+    while traceback_value.tb_next is not None:
+        traceback_value = traceback_value.tb_next
+    frame = traceback_value.tb_frame
+    return f"{frame.f_code.co_filename}:{traceback_value.tb_lineno} in {frame.f_code.co_name}"
+
+
 @dataclass
 class ProjectUpdateResult:
     ok: bool
@@ -58,7 +69,7 @@ class ProjectUpdateResult:
 
     def add_error(
         self,
-        error: Exception,
+        error: BaseException,
         *,
         chat_id: str | None = None,
         chat_url: str | None = None,
@@ -67,13 +78,17 @@ class ProjectUpdateResult:
         code = getattr(error, "code", None) or PROJECT_ERROR_CODES.get(
             type(error).__name__, "PROJECT_UPDATE_ERROR"
         )
+        error_type = type(error).__name__
+        message = str(error).strip() or error_type
         self.errors.append(
             {
                 "chat_id": chat_id,
                 "chat_url": chat_url,
                 "stage": stage,
                 "code": code,
-                "message": str(error),
+                "message": message,
+                "exception_type": error_type,
+                "location": _error_location(error),
             }
         )
         self.ok = False
@@ -114,12 +129,18 @@ class ProjectUpdater:
         archive_factory: Callable[..., ProjectArchive] = ProjectArchive.open,
         archive_root_source: str | None = None,
         max_attempts: int = 3,
+        progress: Callable[[str, dict[str, Any]], None] | None = None,
     ):
         self.max_attempts = max(1, max_attempts)
         self.browser = browser
         self.archive_root = Path(archive_root)
         self.archive_factory = archive_factory
         self.archive_root_source = archive_root_source
+        self.progress = progress
+
+    def _emit(self, stage: str, **details: Any) -> None:
+        if self.progress is not None:
+            self.progress(stage, details)
 
     @staticmethod
     def _chat_state(snapshot: Any, qa_count: int) -> ChatState:
@@ -158,7 +179,17 @@ class ProjectUpdater:
         discovery_error = None
         for attempt in range(self.max_attempts):
             try:
-                discovery = self.browser.discover_project_chats(project_url)
+                self._emit(
+                    "discovery_attempt",
+                    attempt=attempt + 1,
+                    max_attempts=self.max_attempts,
+                )
+                if self.progress is None:
+                    discovery = self.browser.discover_project_chats(project_url)
+                else:
+                    discovery = self.browser.discover_project_chats(
+                        project_url, progress=self.progress
+                    )
                 result.discovered_chats = len(discovery.chats)
                 result.discovery_complete = bool(discovery.complete)
                 result.discovery_diagnostic = discovery.diagnostic
@@ -170,6 +201,13 @@ class ProjectUpdater:
                 break
             except (Exception, KeyboardInterrupt) as error:
                 discovery_error = error
+                self._emit(
+                    "discovery_error",
+                    attempt=attempt + 1,
+                    exception_type=type(error).__name__,
+                    message=str(error).strip() or type(error).__name__,
+                    location=_error_location(error),
+                )
                 if isinstance(error, KeyboardInterrupt):
                     break
         # Open even on partial discovery so its IDs and failed stage survive.
@@ -279,7 +317,18 @@ class ProjectUpdater:
                 error = None
                 for attempt in range(self.max_attempts):
                     try:
-                        snapshot = self.browser.read_project_chat(chat)
+                        self._emit(
+                            "conversation_attempt",
+                            chat_id=chat.chat_id,
+                            attempt=attempt + 1,
+                            max_attempts=self.max_attempts,
+                        )
+                        if self.progress is None:
+                            snapshot = self.browser.read_project_chat(chat)
+                        else:
+                            snapshot = self.browser.read_project_chat(
+                                chat, progress=self.progress
+                            )
                         if snapshot.chat_id != chat.chat_id:
                             raise ConversationHistoryIncomplete(
                                 "Extracted chat identity does not match the pending chat."
@@ -293,6 +342,14 @@ class ProjectUpdater:
                         break
                     except Exception as exc:
                         error = exc
+                        self._emit(
+                            "conversation_error",
+                            chat_id=chat.chat_id,
+                            attempt=attempt + 1,
+                            exception_type=type(exc).__name__,
+                            message=str(exc).strip() or type(exc).__name__,
+                            location=_error_location(exc),
+                        )
                 if error is not None:
                     raise error
                 progress["stage"] = "persistence"
@@ -302,6 +359,12 @@ class ProjectUpdater:
                 # Retain the verified snapshot when saving fails; do not navigate.
                 for attempt in range(self.max_attempts):
                     try:
+                        self._emit(
+                            "persistence_attempt",
+                            chat_id=chat.chat_id,
+                            attempt=attempt + 1,
+                            max_attempts=self.max_attempts,
+                        )
                         wrote, digest = archive.sync_snapshot(snapshot)
                         changed = changed or wrote
                         candidate = replace(
@@ -313,6 +376,14 @@ class ProjectUpdater:
                         break
                     except Exception as exc:
                         error = exc
+                        self._emit(
+                            "persistence_error",
+                            chat_id=chat.chat_id,
+                            attempt=attempt + 1,
+                            exception_type=type(exc).__name__,
+                            message=str(exc).strip() or type(exc).__name__,
+                            location=_error_location(exc),
+                        )
                 if error is not None:
                     raise error
                 if known is None:

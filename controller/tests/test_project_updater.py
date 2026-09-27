@@ -329,6 +329,51 @@ class ProjectUpdaterTests(unittest.TestCase):
         self.assertEqual(archive.directory, directory)
         self.assertEqual(archive.state.project_name, "Renamed Project")
 
+    def test_canonical_project_id_adopts_legacy_named_id_archive(self):
+        canonical = "g-p-0123456789abcdef0123456789abcdef"
+        legacy = canonical + "-legacy-project-name"
+        archive = ProjectArchive.open(
+            self.root,
+            legacy,
+            "Legacy Project",
+            f"https://chatgpt.com/g/{legacy}/project",
+        )
+        archive.save_state()
+        archive.create_chat(
+            "existing",
+            "Existing",
+            f"https://chatgpt.com/g/{legacy}/c/existing",
+            [QAPair("keep this", "preserved")],
+        )
+        archive.save_progress(
+            {
+                "status": "paused",
+                "stage": "extraction",
+                "pending_chat_id": "existing",
+                "discovered": [
+                    {
+                        "chat_id": "existing",
+                        "chat_url": f"https://chatgpt.com/g/{legacy}/c/existing",
+                        "title": "Existing",
+                    }
+                ],
+            }
+        )
+        before = archive.chat_path("existing").read_bytes()
+
+        migrated = ProjectArchive.open(
+            self.root,
+            canonical,
+            "Legacy Project",
+            f"https://chatgpt.com/g/{canonical}-legacy-project-name/project",
+        )
+
+        self.assertEqual(migrated.directory, archive.directory)
+        self.assertEqual(migrated.state.project_id, canonical)
+        self.assertTrue(migrated.metadata_changed)
+        self.assertEqual(migrated.chat_path("existing").read_bytes(), before)
+        self.assertEqual(migrated.load_progress()["pending_chat_id"], "existing")
+
     def test_same_project_names_are_separated_by_project_id(self):
         first = ProjectArchive.open(
             self.root, "g-p-first", "Same Name", "https://chatgpt.com/g/g-p-first"

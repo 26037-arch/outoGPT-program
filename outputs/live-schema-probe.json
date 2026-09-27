@@ -1,13 +1,146 @@
 {
   "kind": "live_chrome_schema_probe",
-  "requests": [],
-  "responses": [],
-  "error": null,
-  "page_title": "로그인 - Google 계정",
-  "login_or_challenge_visible": false,
-  "connected_pages": 0,
-  "chat_count": 0,
-  "page_origin": "https://accounts.google.com",
-  "page_path": "/v3/signin/identifier",
-  "result": "blocked_by_login_redirect; no project or conversation responses verified"
+  "requests": [
+    "/backend-api/gizmos/g-p-6a857675b2b08191bbb964c9ec5e4838",
+    "/backend-api/conversations",
+    "/backend-api/conversations",
+    "/backend-api/gizmos/g-p-6a9c0b4490f4819194f66672d9b8d1c7",
+    "/backend-api/gizmos/g-p-69e511ce5ef88191a7590c49fa67edbb",
+    "/backend-api/gizmos/g-p-69da439166dc8191b60b67361edd293c",
+    "/backend-api/gizmos/g-p-69ca918d41a08191baf32ca6e094a8b4",
+    "/backend-api/gizmos/g-p-69da467febd48191a0fff17a4c96ce80",
+    "/backend-api/gizmos/snorlax/sidebar",
+    "/backend-api/gizmos/bootstrap",
+    "/backend-api/gizmos/g-p-6a9c0b4490f4819194f66672d9b8d1c7/conversations",
+    "/backend-api/gizmos/g-p-69e511ce5ef88191a7590c49fa67edbb/conversations",
+    "/backend-api/gizmos/g-p-69da439166dc8191b60b67361edd293c/conversations",
+    "/backend-api/gizmos/g-p-69ca918d41a08191baf32ca6e094a8b4/conversations",
+    "/backend-api/gizmos/g-p-69da467febd48191a0fff17a4c96ce80/conversations",
+    "/backend-api/gizmos/g-p-6a857675b2b08191bbb964c9ec5e4838/conversations",
+    "/backend-api/gizmos/g-p-6a857675b2b08191bbb964c9ec5e4838/conversations",
+    "/backend-api/conversation/init"
+  ],
+  "responses": [
+    {
+      "keys": [
+        "items",
+        "cursor"
+      ],
+      "cursor": "v1.OWNED_DT:MjAyNi0wOS0xN1QwMzozMTowOC43Njg2ODUrMDA6MDA=",
+      "item_keys": [
+        "id",
+        "title",
+        "create_time",
+        "update_time",
+        "latest_assistant_turn_created_at",
+        "pinned_time",
+        "mapping",
+        "current_node",
+        "conversation_template_id",
+        "gizmo_id",
+        "is_archived",
+        "is_starred",
+        "is_temporary_chat",
+        "is_do_not_remember",
+        "memory_scope",
+        "context_scopes",
+        "context_scopes_v2",
+        "workspace_id",
+        "async_status",
+        "safe_urls",
+        "blocked_urls",
+        "conversation_origin",
+        "trial_conversation_type",
+        "is_automation_conversation",
+        "snippet",
+        "summary_metadata",
+        "sugar_item_id",
+        "sugar_item_visible",
+        "owner"
+      ]
+    },
+    {
+      "keys": [
+        "items",
+        "cursor"
+      ],
+      "cursor": "K1JJRDp-QlAwT0FOQ0xIYmZPRXk4QUFHRFRCQT09I1JUOjEjVFJDOjEwI1JURDpsWkRrVk5mbXZ5Zy9xZ0V3c1NkUThRVTNZamsyT0RjNE9HWXpOMlE1TkRNMU9qZG1aR1JqWkdZMk56WTJNbVkyTkFBRk4ySTVOamczT0RobU16ZGtPVFF6TlRvM1ptUmtZMlJtTmpjMk5qSm1OalFBQlZGemNHdG1aSFZWY0VSd2IzZG1jM1JpZFdwd2J3QUQrc3pPek1qUnpzWFJ6c1dxenNyRXk4N0V5ODNReGMzTnlNWEYwODdPeE03Ty8vckluWjNPbWM2Ym5OSEZ6Y2ZHMGNiTG1jYlJuTWZIemRISm1wakhtWnZMeVppWnhaci8jSVNWOjIjSUVPOjY1NTk5I1FDRjo4I0NJRDoy",
+      "item_keys": [
+        "id",
+        "title",
+        "create_time",
+        "update_time",
+        "latest_assistant_turn_created_at",
+        "pinned_time",
+        "mapping",
+        "current_node",
+        "conversation_template_id",
+        "gizmo_id",
+        "is_archived",
+        "is_starred",
+        "is_temporary_chat",
+        "is_do_not_remember",
+        "memory_scope",
+        "context_scopes",
+        "context_scopes_v2",
+        "workspace_id",
+        "async_status",
+        "safe_urls",
+        "blocked_urls",
+        "conversation_origin",
+        "trial_conversation_type",
+        "is_automation_conversation",
+        "snippet",
+        "summary_metadata",
+        "sugar_item_id",
+        "sugar_item_visible",
+        "owner"
+      ]
+    }
+  ],
+  "conflicts": [
+    {
+      "initial_page": false,
+      "old_count": 5,
+      "new_count": 10,
+      "same_ids_in_order": false,
+      "same_id_set": false,
+      "same_next_cursor": false,
+      "added_count": 5,
+      "removed_count": 0,
+      "old_keys": [
+        "cursor",
+        "items"
+      ],
+      "new_keys": [
+        "cursor",
+        "items"
+      ]
+    }
+  ],
+  "error": "Pagination body validation failed: The same request cursor returned conflicting pages; reload this stage.",
+  "matched_requests": [
+    {
+      "has_cursor": true,
+      "limit": "5",
+      "offset": null,
+      "parameter_names": [
+        "cursor",
+        "limit",
+        "owned_only"
+      ],
+      "sort": null,
+      "order": null
+    },
+    {
+      "has_cursor": true,
+      "limit": null,
+      "offset": null,
+      "parameter_names": [
+        "cursor"
+      ],
+      "sort": null,
+      "order": null
+    }
+  ]
 }

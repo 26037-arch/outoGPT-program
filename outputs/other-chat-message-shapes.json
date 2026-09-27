@@ -1,0 +1,69 @@
+{
+  "kind": "other-chat-message-shapes",
+  "samples": [
+    {
+      "message_id_sha256": "27cc424c41ba642e",
+      "content_type": "text",
+      "content_keys": [
+        "content_type",
+        "parts"
+      ],
+      "parts_shape": {
+        "type": "list",
+        "length": 1
+      },
+      "part_shapes": [
+        {
+          "type": "str"
+        }
+      ],
+      "metadata_keys": [
+        "attachments",
+        "can_save",
+        "message_source",
+        "request_id",
+        "selected_sources",
+        "serialization_metadata",
+        "turn_exchange_id",
+        "turn_id",
+        "working_turn_id"
+      ],
+      "attachments_shape": {
+        "type": "list",
+        "length": 1
+      },
+      "hidden": null,
+      "recipient": "all",
+      "end_turn": null
+    }
+  ],
+  "error": null,
+  "network_zero_user_count": 1,
+  "dom_turn_count": 5,
+  "zero_users_seen_as_dom_turns": [
+    "27cc424c41ba642e"
+  ],
+  "matching_dom_profiles": [
+    {
+      "attributes": [
+        "class",
+        "data-turn-key"
+      ],
+      "userBubbles": 0,
+      "selectionIds": 1,
+      "attachmentNodes": [],
+      "textLength": 7109
+    }
+  ],
+  "scroll": {
+    "found": true,
+    "containerKind": "ancestor",
+    "before": -33799,
+    "after": -33799,
+    "reverse": true,
+    "wasAtTop": true,
+    "atTop": true,
+    "scrollHeight": 34688,
+    "clientHeight": 889
+  }
+}

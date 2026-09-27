@@ -84,11 +84,17 @@ class BrowserAdapter:
         self._project_page = session.new_page()
         return self._project_page
 
-    def discover_project_chats(self, project_url: str):
-        return discover_project_chats(self._project_update_page(), project_url)
+    def discover_project_chats(self, project_url: str, *, progress=None):
+        return discover_project_chats(
+            self._project_update_page(), project_url, progress=progress
+        )
 
-    def read_project_chat(self, chat):
-        return read_conversation(self._project_update_page(), chat)
+    def read_project_chat(self, chat, *, progress=None):
+        if progress is not None:
+            progress("conversation_open", {"chat_id": chat.chat_id})
+        return read_conversation(
+            self._project_update_page(), chat, progress=progress
+        )
 
     def __enter__(self) -> "BrowserAdapter":
         return self.open()

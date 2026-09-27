@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping
-from urllib.parse import urlsplit
+from difflib import SequenceMatcher
+from typing import Any, Callable, Iterable, Mapping
+from urllib.parse import urlsplit, urlunsplit
 
 from .chatgpt import generation_in_progress
 from .config import validate_chat_url, validate_project_url
-from .pagination import PaginationEvidence
 from .errors import (
     ConversationHistoryIncomplete,
     ConversationLoadingUnknown,
@@ -20,6 +21,7 @@ from .errors import (
     PageStructureChanged,
     ProjectAccessFailed,
 )
+from .pagination import PaginationEvidence
 from .selectors import (
     CONVERSATION_ROOTS,
     CONVERSATION_TITLES,
@@ -48,6 +50,7 @@ from .selectors import (
 
 PAGE_LOAD_TIMEOUT_MS = 60_000
 DOM_POLL_MS = 200
+ProjectProgress = Callable[[str, Mapping[str, Any]], None]
 
 
 @dataclass(frozen=True)
@@ -91,15 +94,11 @@ def extract_project_id(url: str) -> str:
         parts = [part for part in urlsplit(url).path.split("/") if part]
     except ValueError as exc:
         raise InvalidProjectUrl("The project URL is malformed.") from exc
-    project_id = next(
-        (part for part in parts if re.fullmatch(r"g-p-[A-Za-z0-9_-]{1,128}", part)),
-        "",
-    )
-    if not project_id:
-        raise InvalidProjectUrl(
-            "Expected a ChatGPT Project URL containing a g-p- project identifier."
-        )
-    return project_id
+    for part in parts:
+        match = re.match(r"^(g-p-[0-9a-fA-F]{32})(?=-|$)", part)
+        if match:
+            return match.group(1)
+    raise InvalidProjectUrl("Could not extract the canonical project ID.")
 
 
 def _chat_belongs_to_project(
@@ -128,6 +127,29 @@ def extract_chat_id(url: str) -> str:
             "A discovered conversation id is not safe to archive."
         )
     return chat_id
+
+
+def project_chat_url(project_url: str, chat_id: str) -> str:
+    """Build the canonical route used by conversation links on project pages."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", chat_id):
+        raise PageStructureChanged("A project response contained an unsafe chat ID.")
+    parts = urlsplit(project_url)
+    path_parts = [part for part in parts.path.split("/") if part]
+    project_index = next(
+        (
+            index
+            for index, part in enumerate(path_parts)
+            if re.match(r"^g-p-[0-9a-fA-F]{32}(?=-|$)", part)
+        ),
+        None,
+    )
+    if project_index is None:
+        raise InvalidProjectUrl("Could not find the canonical project URL segment.")
+    canonical_id = extract_project_id(path_parts[project_index])
+    path = "/" + "/".join(
+        [*path_parts[:project_index], canonical_id, "c", chat_id]
+    )
+    return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
 
 
 _PROJECT_SAMPLE_SCRIPT = r"""
@@ -304,11 +326,14 @@ def discover_project_chats(
     project_url: str,
     *,
     stable_rounds: int = 3,
-    max_rounds: int = 1500,
+    max_rounds: int = 400,
     poll_ms: int = DOM_POLL_MS,
+    stall_rounds: int = 60,
+    progress: ProjectProgress | None = None,
+    monotonic: Callable[[], float] = time.monotonic,
 ) -> ProjectDiscovery:
     """Only a connected response chain ending in cursor:null proves completion."""
-    if stable_rounds < 1 or max_rounds < 1 or poll_ms < 0:
+    if stable_rounds < 1 or max_rounds < 1 or stall_rounds < 1 or poll_ms < 0:
         raise ValueError("Polling limits must be positive (poll_ms may be zero).")
     project_url = validate_project_url(project_url)
     project_id = extract_project_id(project_url)
@@ -320,17 +345,23 @@ def discover_project_chats(
         )
         stable = 0
         previous = -1
-        for _ in range(max_rounds):
+        last_progress_round = 0
+        last_progress_at = monotonic()
+        last_revision = -1
+        last_scroll_fingerprint = None
+        last_scroll: Mapping[str, Any] = {}
+        for round_index in range(max_rounds):
             _check_project_page_state(page, project_id, project_url)
             evidence.drain()
             sample = _project_sample(page)
             name = str(sample.get("name") or name)
-            for payload in evidence.pages.values():
+            before = len(discovered)
+            for payload in evidence.selected_project_pages():
                 for item in payload["items"]:
                     identifier = item["id"]
                     discovered[identifier] = ProjectChat(
                         identifier,
-                        f"https://chatgpt.com/g/{project_id}/c/{identifier}",
+                        project_chat_url(project_url, identifier),
                         str(item.get("title") or "Untitled conversation"),
                     )
             chain = evidence.chain()
@@ -343,7 +374,20 @@ def discover_project_chats(
                 stable + 1 if ready and previous == evidence.revision else int(ready)
             )
             previous = evidence.revision
+            state = {
+                **evidence.debug_state(),
+                "round": round_index + 1,
+                "chats": len(discovered),
+                "complete_chain": chain is not None,
+                "scroll": dict(last_scroll),
+            }
+            if progress is not None and (
+                evidence.revision != last_revision or len(discovered) != before
+            ):
+                progress("project_discovery", state)
             if stable >= stable_rounds:
+                if progress is not None:
+                    progress("project_discovery_complete", state)
                 return ProjectDiscovery(
                     project_id,
                     project_url,
@@ -352,15 +396,68 @@ def discover_project_chats(
                     True,
                     "Verified initial request through cursor:null; all bodies parsed.",
                 )
-            _scroll_project_region(page)
+            last_scroll = _scroll_project_region(page)
+            scroll_fingerprint = (
+                last_scroll.get("after"),
+                last_scroll.get("scrollHeight"),
+                last_scroll.get("atEnd"),
+                last_scroll.get("loadMoreClicked"),
+            )
+            progressed = (
+                evidence.revision != last_revision
+                or len(discovered) != before
+                or bool(last_scroll.get("loadMoreClicked"))
+                or (
+                    bool(last_scroll.get("moved"))
+                    and scroll_fingerprint != last_scroll_fingerprint
+                )
+            )
+            if progressed:
+                last_progress_round = round_index
+                last_progress_at = monotonic()
+            last_revision = evidence.revision
+            last_scroll_fingerprint = scroll_fingerprint
+            if round_index - last_progress_round >= stall_rounds:
+                state = {
+                    **evidence.debug_state(),
+                    "round": round_index + 1,
+                    "chats": len(discovered),
+                    "last_progress_ms_ago": int(
+                        max(0.0, monotonic() - last_progress_at) * 1000
+                    ),
+                    "scroll": dict(last_scroll),
+                }
+                if progress is not None:
+                    progress("project_discovery_stalled", state)
+                return ProjectDiscovery(
+                    project_id,
+                    project_url,
+                    name,
+                    tuple(discovered.values()),
+                    False,
+                    "Project pagination stalled before a verified terminal page: "
+                    f"{state}",
+                )
             page.wait_for_timeout(poll_ms)
+        state = {
+            **evidence.debug_state(),
+            "round": max_rounds,
+            "chats": len(discovered),
+            "last_progress_ms_ago": int(
+                max(0.0, monotonic() - last_progress_at) * 1000
+            ),
+            "scroll": dict(last_scroll),
+        }
+        if progress is not None:
+            progress("project_discovery_limit", state)
         return ProjectDiscovery(
             project_id,
             project_url,
             name,
             tuple(discovered.values()),
             False,
-            "Project pagination remains partial; terminal connected response not verified.",
+            "Project pagination reached its scan limit without a verified terminal "
+            f"page: {state}",
         )
 
 
@@ -524,9 +621,37 @@ _CONVERSATION_SCRIPT = r"""
     for (let current = node; current && current !== turn; current = current.parentElement) depth += 1;
     return depth;
   };
+  const messageRole = (node) => {
+    const explicit = String(node?.getAttribute?.("data-message-author-role")
+      || node?.getAttribute?.("data-conversation-role") || "").toLowerCase();
+    if (explicit === "user" || explicit === "assistant") return explicit;
+    if (node?.matches?.("[data-user-message-bubble]")) return "user";
+    if (node?.matches?.("[data-chatgpt-selection-message-id]")) return "assistant";
+    if (node?.matches?.('[data-testid="chatgpt-writing-block"]')) return "assistant";
+    if (node?.hasAttribute?.("data-turn-key")
+        && query(node, attachmentSelectors).some((attachment) => !inactive(attachment, node))
+        && !node.querySelector?.("[data-chatgpt-selection-message-id]")) return "user";
+    return "";
+  };
+  const messageId = (turn, roleNode) => {
+    const role = messageRole(roleNode);
+    const direct = roleNode.getAttribute?.("data-message-id")
+      || roleNode.getAttribute?.("data-chatgpt-selection-message-id")
+      || roleNode.querySelector?.("[data-chatgpt-selection-message-id]")
+        ?.getAttribute("data-chatgpt-selection-message-id");
+    if (direct) return direct;
+    if (role === "user") return turn.getAttribute?.("data-turn-key") || "";
+    if (role === "assistant") {
+      const candidates = turn.querySelectorAll?.("[data-chatgpt-selection-message-id]") || [];
+      if (candidates.length === 1) {
+        return candidates[0].getAttribute("data-chatgpt-selection-message-id") || "";
+      }
+    }
+    return "";
+  };
   const logicalRoleNodes = (turn) => {
     const roleNodes = [
-      ...(matches(turn, roleSelectors) ? [turn] : []),
+      ...(matches(turn, roleSelectors) || messageRole(turn) ? [turn] : []),
       ...query(turn, roleSelectors)
     ].filter(
       (node) => !inactive(node, turn)
@@ -537,8 +662,8 @@ _CONVERSATION_SCRIPT = r"""
     const unique = [];
     const seen = new Set();
     for (const node of outermost.sort((left, right) => depthFromTurn(left, turn) - depthFromTurn(right, turn))) {
-      const id = node.getAttribute("data-message-id") || node.getAttribute("data-turn-id") || "";
-      const key = id ? `id:${id}` : `${node.getAttribute("data-message-author-role")}:${clean(node.textContent)}`;
+      const id = messageId(turn, node) || node.getAttribute("data-turn-id") || "";
+      const key = id ? `id:${id}` : `${messageRole(node)}:${clean(node.textContent)}`;
       if (seen.has(key)) continue;
       seen.add(key);
       unique.push(node);
@@ -571,7 +696,7 @@ _CONVERSATION_SCRIPT = r"""
     return value && value.length <= 260 && !generic.test(value) ? value : "";
   };
   const attachmentEvidence = (roleNode) => {
-    if (roleNode.getAttribute("data-message-author-role") !== "user") return [];
+    if (messageRole(roleNode) !== "user") return [];
     const fileNodes = outermostActive(roleNode, attachmentSelectors);
     const evidence = fileNodes.map((node) => {
       const name = attachmentName(node);
@@ -592,6 +717,8 @@ _CONVERSATION_SCRIPT = r"""
       ["data-turn-id", roleNode],
       ["data-turn-id", turn],
       ["data-message-id", turn],
+      ["data-chatgpt-selection-message-id", roleNode],
+      ["data-turn-key", turn],
       ["data-testid", turn]
     ]) {
       const value = String(node.getAttribute?.(attribute) || "").trim();
@@ -638,9 +765,9 @@ _CONVERSATION_SCRIPT = r"""
       const content = clone.querySelector(".markdown") || clone;
       return {
         turnId: stableTurnId(turn, roleNode, index, roleNodes.length),
-        messageId: roleNode.getAttribute("data-message-id")
-          || roleNode.querySelector("[data-message-id]")?.getAttribute("data-message-id") || "",
-        role: roleNode.getAttribute("data-message-author-role"),
+        turnKey: String(turn.getAttribute?.("data-turn-key") || ""),
+        messageId: messageId(turn, roleNode),
+        role: messageRole(roleNode),
         markdown: clean(render(content)),
         attachments
       };
@@ -741,19 +868,26 @@ _CONVERSATION_SCROLL_TOP_SCRIPT = r"""
   }
   if (!container) return { found: false, atTop: false, wasAtTop: false };
   const before = Number(container.scrollTop || 0);
-  const target = Math.max(0, before - Math.max(Number(container.clientHeight || 0) * 0.8, 1));
+  const style = getComputedStyle(container);
+  const reverse = String(style.flexDirection || "").toLowerCase() === "column-reverse";
+  const extent = Math.max(0, Number(container.scrollHeight || 0) - Number(container.clientHeight || 0));
+  const step = Math.max(Number(container.clientHeight || 0) * 0.8, 1);
+  const target = reverse ? Math.max(-extent, before - step) : Math.max(0, before - step);
   try { container.scrollTo({ top: target, behavior: "instant" }); }
   catch (_) { container.scrollTop = target; }
   container.scrollTop = target;
   try { container.dispatchEvent(new Event("scroll", { bubbles: true })); } catch (_) {}
   const after = Number(container.scrollTop || 0);
+  const wasAtTop = reverse ? before <= -extent + 1 : before <= 1;
+  const atTop = reverse ? after <= -extent + 1 : after <= 1;
   return {
     found: true,
     containerKind,
     before,
     after,
-    wasAtTop: before <= 1,
-    atTop: after <= 1,
+    reverse,
+    wasAtTop,
+    atTop,
     scrollHeight: Number(container.scrollHeight || 0),
     clientHeight: Number(container.clientHeight || 0)
   };
@@ -842,6 +976,7 @@ def _normalize_conversation_messages(
         normalized.append(
             {
                 "turnId": turn_id,
+                "turnKey": str(message.get("turnKey") or ""),
                 "messageId": str(message.get("messageId") or ""),
                 "role": role,
                 "markdown": markdown,
@@ -851,14 +986,38 @@ def _normalize_conversation_messages(
     return tuple(normalized)
 
 
-def _verify_network_messages(evidence, accumulated):
+def _verify_network_messages(evidence, accumulated, observed_turn_keys=()):
     nodes = evidence.ordered_nodes()
     if nodes is None:
+        evidence.verification_wait = "network cursor chain is incomplete"
         return None
+    evidence.verification_wait = None
+
+    def waiting(reason):
+        evidence.verification_wait = reason
+        return None
+
     visible = []
     hidden = []
     network_ids = set()
-    for node in nodes:
+
+    def source_markdown(source_text, dom):
+        additions = []
+        for attachment in dom.get("attachments") or ():
+            if attachment.get("kind") == "image":
+                placeholder = "[Image attachment]"
+            elif attachment.get("kind") == "file":
+                name = str(attachment.get("name") or "").replace("[", r"\[").replace(
+                    "]", r"\]"
+                )
+                placeholder = f"[Attachment: {name}]" if name else "[Attachment]"
+            else:
+                continue
+            if placeholder not in additions:
+                additions.append(placeholder)
+        return "\n\n".join(part for part in (source_text, *additions) if part)
+
+    for node_index, node in enumerate(nodes):
         message = node.get("message")
         if message is None:
             continue  # Structural mapping node, not a message.
@@ -866,16 +1025,61 @@ def _verify_network_messages(evidence, accumulated):
         network_ids.add(identifier)
         role = message["author"].get("role")
         metadata = message.get("metadata") or {}
-        if role == "assistant" and message.get("status") != "finished_successfully":
-            evidence.fail(f"Assistant message {identifier} is not confirmed finished.")
-        if (
+        channel = message.get("channel") or metadata.get("channel")
+        content = message.get("content") or {}
+        parts = content.get("parts")
+        model_context = (
+            role == "assistant"
+            and content.get("content_type") == "model_editable_context"
+            and (parts is None or parts == [])
+            and message.get("recipient") == "all"
+        )
+        internal_tool_call = (
+            role == "assistant"
+            and isinstance(message.get("recipient"), str)
+            and message.get("recipient") not in {"", "all"}
+            and content.get("content_type") in {"code", "text"}
+            and message.get("end_turn") in {None, False}
+        )
+        internal_thoughts = (
+            role == "assistant"
+            and content.get("content_type") in {"thoughts", "reasoning_recap"}
+            and (parts is None or parts == [])
+            and message.get("recipient") == "all"
+            and message.get("end_turn") is False
+        )
+        intermediate_assistant = role == "assistant" and message.get("end_turn") is False
+        empty_user_placeholder = (
+            role == "user"
+            and content.get("content_type") == "text"
+            and isinstance(parts, list)
+            and all(isinstance(part, str) and not part.strip() for part in parts)
+            and not metadata.get("attachments")
+        )
+        non_ui = (
             role in {"system", "tool", "developer"}
+            or (role == "assistant" and channel in {"analysis", "commentary"})
+            or model_context
+            or internal_tool_call
+            or internal_thoughts
+            or intermediate_assistant
+            or empty_user_placeholder
             or metadata.get("is_visually_hidden_from_conversation") is True
-        ):
+        )
+        if role == "assistant" and message.get("status") != "finished_successfully":
+            historical_internal = non_ui and node_index < len(nodes) - 1
+            if not historical_internal:
+                evidence.fail(
+                    f"Assistant message {identifier} is not confirmed finished."
+                )
+        if non_ui:
             hidden.append(
                 {
                     "id": identifier,
-                    "reason": "non-UI role or explicit hidden metadata",
+                    "reason": (
+                        "non-UI role, internal channel/context/tool stage, empty "
+                        "placeholder, or explicit hidden metadata"
+                    ),
                     "source": message,
                 }
             )
@@ -883,8 +1087,87 @@ def _verify_network_messages(evidence, accumulated):
         if role not in {"user", "assistant"}:
             evidence.fail(f"Unclassified message role for {identifier}.")
         dom = accumulated.get(identifier)
+        if dom is None and role == "user" and identifier in observed_turn_keys:
+            blank_parts = (
+                isinstance(parts, list)
+                and all(isinstance(part, str) and not part.strip() for part in parts)
+            )
+            merged_files = metadata.get("attachments") or []
+            if (
+                blank_parts
+                and isinstance(merged_files, list)
+                and merged_files
+                and all(
+                    isinstance(item, dict) and isinstance(item.get("name"), str)
+                    and item["name"]
+                    for item in merged_files
+                )
+            ):
+                attachments = [
+                    {"kind": "file", "name": item["name"]} for item in merged_files
+                ]
+                dom = {
+                    "turnId": f"data-turn-key:{identifier}",
+                    "turnKey": identifier,
+                    "messageId": identifier,
+                    "role": "user",
+                    "markdown": "\n\n".join(
+                        f"[Attachment: {item['name']}]" for item in merged_files
+                    ),
+                    "attachments": attachments,
+                }
         if dom is None or dom["role"] != role or not dom["markdown"]:
-            return None
+            parts = parts or []
+            source_characters = sum(len(part) for part in parts if isinstance(part, str))
+            diagnostic = {
+                "role": role,
+                "status": message.get("status"),
+                "channel": channel,
+                "recipient": message.get("recipient"),
+                "end_turn": message.get("end_turn"),
+                "content_type": content.get("content_type"),
+                "parts": len(parts) if isinstance(parts, list) else None,
+                "source_chars": source_characters,
+                "hidden": metadata.get("is_visually_hidden_from_conversation"),
+                "message_type": metadata.get("message_type"),
+                "real_author": metadata.get("real_author"),
+            }
+            missing = []
+            for candidate_node in nodes:
+                candidate = candidate_node.get("message")
+                if not candidate or candidate.get("id") in accumulated:
+                    continue
+                candidate_content = candidate.get("content") or {}
+                candidate_parts = candidate_content.get("parts") or []
+                candidate_metadata = candidate.get("metadata") or {}
+                missing.append(
+                    {
+                        "role": (candidate.get("author") or {}).get("role"),
+                        "status": candidate.get("status"),
+                        "channel": candidate.get("channel")
+                        or candidate_metadata.get("channel"),
+                        "recipient": candidate.get("recipient"),
+                        "end_turn": candidate.get("end_turn"),
+                        "content_type": candidate_content.get("content_type"),
+                        "parts": len(candidate_parts)
+                        if isinstance(candidate_parts, list)
+                        else None,
+                        "source_chars": sum(
+                            len(part)
+                            for part in candidate_parts
+                            if isinstance(part, str)
+                        ),
+                        "hidden": candidate_metadata.get(
+                            "is_visually_hidden_from_conversation"
+                        ),
+                        "message_type": candidate_metadata.get("message_type"),
+                    }
+                )
+            omitted = max(0, len(missing) - 12)
+            return waiting(
+                "visible message is not accumulated from the DOM: "
+                f"{diagnostic}; missing_sample={missing[:12]}; omitted={omitted}"
+            )
         content = message["content"]
         parts = content.get("parts")
         if content.get("content_type") not in {
@@ -906,7 +1189,7 @@ def _verify_network_messages(evidence, accumulated):
         if len([item for item in attachments if item.get("kind") == "image"]) != len(
             images
         ):
-            return None
+            return waiting("image attachment evidence is not synchronized")
         files = metadata.get("attachments") or []
         if not isinstance(files, list) or any(
             not isinstance(item, dict) or not item.get("name") for item in files
@@ -915,7 +1198,7 @@ def _verify_network_messages(evidence, accumulated):
         if sorted(item["name"] for item in files) != sorted(
             item.get("name", "") for item in attachments if item.get("kind") == "file"
         ):
-            return None
+            return waiting("file attachment evidence is not synchronized")
         source_text = "\n\n".join(
             part for part in parts if isinstance(part, str)
         ).strip()
@@ -933,9 +1216,44 @@ def _verify_network_messages(evidence, accumulated):
         def canonical(value):
             return re.sub(r"[\s`*_#>|\\]+", "", value)
 
-        if canonical(source_text) != canonical(rendered_text):
-            return None
-        visible.append({**dom, "id": identifier, "source": message})
+        source_canonical = canonical(source_text)
+        rendered_canonical = canonical(rendered_text)
+        archived_markdown = dom["markdown"]
+        if source_canonical != rendered_canonical:
+            source_semantic = "".join(
+                character.casefold()
+                for character in source_text
+                if character.isalnum()
+            )
+            rendered_semantic = "".join(
+                character.casefold()
+                for character in rendered_text
+                if character.isalnum()
+            )
+            matcher = SequenceMatcher(None, source_semantic, rendered_semantic)
+            matched = sum(block.size for block in matcher.get_matching_blocks())
+            source_coverage = matched / max(1, len(source_semantic))
+            rendered_coverage = matched / max(1, len(rendered_semantic))
+            if not (
+                len(source_semantic) >= 128
+                and source_coverage >= 0.80
+                and rendered_coverage >= 0.95
+            ):
+                return waiting(
+                    "network source text and rendered DOM text differ "
+                    f"(role={role}, channel={channel}, parts={len(parts)}, "
+                    f"source_chars={len(source_canonical)}, "
+                    f"rendered_chars={len(rendered_canonical)}, "
+                    f"source_coverage={source_coverage:.3f}, "
+                    f"rendered_coverage={rendered_coverage:.3f})"
+                )
+            # The UI can collapse citation or long-answer segments. The exact
+            # UUID and ordered DOM coverage verify the visible message, while
+            # the response source prevents collapsed text from being lost.
+            archived_markdown = source_markdown(source_text, dom)
+        visible.append(
+            {**dom, "markdown": archived_markdown, "id": identifier, "source": message}
+        )
     if set(accumulated) - network_ids:
         evidence.fail(
             "DOM contains message UUIDs absent from the completed response chain."
@@ -958,14 +1276,28 @@ def _verify_network_messages(evidence, accumulated):
 
 
 def _hydrate_conversation_history(
-    page, evidence, *, stable_rounds, max_rounds, poll_ms
+    page,
+    evidence,
+    *,
+    stable_rounds,
+    max_rounds,
+    poll_ms,
+    stall_rounds,
+    progress,
+    monotonic,
 ):
     accumulated: dict[str, dict] = {}
+    observed_turn_keys: set[str] = set()
     previous = None
     stable = 0
     saw_generation = False
     sample = {}
-    for _ in range(max_rounds):
+    last_progress_round = 0
+    last_progress_at = monotonic()
+    last_progress_token = None
+    last_scroll: Mapping[str, Any] = {}
+    last_scroll_fingerprint = None
+    for round_index in range(max_rounds):
         if login_or_challenge_visible(page) or "/auth/" in getattr(page, "url", ""):
             raise LoginRequired(
                 "ChatGPT authentication is required to read the conversation."
@@ -974,6 +1306,11 @@ def _hydrate_conversation_history(
         if generation_in_progress(page):
             saw_generation = True
             stable = 0
+            if progress is not None and round_index == 0:
+                progress(
+                    "conversation_generation",
+                    {**evidence.debug_state(), "round": round_index + 1},
+                )
             page.wait_for_timeout(poll_ms)
             continue
         if saw_generation:
@@ -984,6 +1321,9 @@ def _hydrate_conversation_history(
             )
         sample = _conversation_sample(page)
         messages = _normalize_conversation_messages(sample.get("messages") or ())
+        observed_turn_keys.update(
+            message["turnKey"] for message in messages if message.get("turnKey")
+        )
         window = {}
         for message in messages:
             identifier = message["messageId"]
@@ -997,7 +1337,9 @@ def _hydrate_conversation_history(
                 )
             window[identifier] = message
             accumulated[identifier] = message
-        verified = _verify_network_messages(evidence, accumulated)
+        verified = _verify_network_messages(
+            evidence, accumulated, observed_turn_keys=observed_turn_keys
+        )
         fingerprint = (evidence.revision, repr(verified))
         ready = (
             verified is not None
@@ -1006,9 +1348,84 @@ def _hydrate_conversation_history(
         )
         stable = stable + 1 if ready and fingerprint == previous else int(ready)
         previous = fingerprint
-        if stable >= stable_rounds:
+        progress_token = (
+            evidence.revision,
+            len(accumulated),
+            tuple(
+                (message.get("messageId"), message.get("markdown"))
+                for message in messages
+            ),
+        )
+        if progress_token != last_progress_token:
+            last_progress_round = round_index
+            last_progress_at = monotonic()
+            last_progress_token = progress_token
+            if progress is not None:
+                progress(
+                    "conversation_loading",
+                    {
+                        **evidence.debug_state(),
+                        "round": round_index + 1,
+                        "dom_messages": len(accumulated),
+                        "verified": verified is not None,
+                    },
+                )
+        if (
+            stable >= stable_rounds
+            and last_scroll.get("found")
+            and last_scroll.get("atTop")
+        ):
+            if progress is not None:
+                progress(
+                    "conversation_complete",
+                    {
+                        **evidence.debug_state(),
+                        "round": round_index + 1,
+                        "dom_messages": len(accumulated),
+                        "scroll": dict(last_scroll),
+                    },
+                )
             return {**sample, "messages": verified[0], "non_ui_messages": verified[1]}
-        _scroll_conversation_history_to_top(page)
+        last_scroll = _scroll_conversation_history_to_top(page)
+        scroll_fingerprint = (
+            last_scroll.get("before"),
+            last_scroll.get("after"),
+            last_scroll.get("scrollHeight"),
+            last_scroll.get("atTop"),
+        )
+        if (
+            last_scroll.get("after") != last_scroll.get("before")
+            and scroll_fingerprint != last_scroll_fingerprint
+        ):
+            last_progress_round = round_index
+            last_progress_at = monotonic()
+            if progress is not None and round_index % 20 == 0:
+                progress(
+                    "conversation_scrolling",
+                    {
+                        **evidence.debug_state(),
+                        "round": round_index + 1,
+                        "dom_messages": len(accumulated),
+                        "scroll": dict(last_scroll),
+                    },
+                )
+        last_scroll_fingerprint = scroll_fingerprint
+        if round_index - last_progress_round >= stall_rounds:
+            state = {
+                **evidence.debug_state(),
+                "round": round_index + 1,
+                "dom_messages": len(accumulated),
+                "last_progress_ms_ago": int(
+                    max(0.0, monotonic() - last_progress_at) * 1000
+                ),
+                "scroll": dict(last_scroll),
+            }
+            if progress is not None:
+                progress("conversation_stalled", state)
+            raise ConversationHistoryIncomplete(
+                "Conversation loading stalled before all network pages and DOM "
+                f"messages were verified: {state}"
+            )
         page.wait_for_timeout(poll_ms)
     raise ConversationHistoryIncomplete(
         "Conversation remains pending: terminal page, pending bodies, generation, or message content not verified."
@@ -1020,11 +1437,14 @@ def read_conversation(
     chat: ProjectChat,
     *,
     stable_rounds: int = 3,
-    max_rounds: int = 3000,
+    max_rounds: int = 400,
     poll_ms: int = DOM_POLL_MS,
+    stall_rounds: int = 60,
+    progress: ProjectProgress | None = None,
+    monotonic: Callable[[], float] = time.monotonic,
 ) -> ConversationSnapshot:
     """Install CDP monitoring before navigation; no DOM-only completion fallback."""
-    if stable_rounds < 1 or max_rounds < 1 or poll_ms < 0:
+    if stable_rounds < 1 or max_rounds < 1 or stall_rounds < 1 or poll_ms < 0:
         raise ValueError("Polling limits must be positive (poll_ms may be zero).")
     with PaginationEvidence("conversation", chat.chat_id).start(page) as evidence:
         try:
@@ -1057,6 +1477,9 @@ def read_conversation(
             stable_rounds=stable_rounds,
             max_rounds=max_rounds,
             poll_ms=poll_ms,
+            stall_rounds=stall_rounds,
+            progress=progress,
+            monotonic=monotonic,
         )
         messages = complete["messages"]
         return ConversationSnapshot(

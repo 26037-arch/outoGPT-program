@@ -1,0 +1,543 @@
+{
+  "kind": "project-network-details",
+  "requests": [
+    {
+      "request_id": "26776.363",
+      "path": "/backend-api/gizmos/g-p-6a857675b2b08191bbb964c9ec5e4838",
+      "parameters": {},
+      "status": 200,
+      "body": {
+        "shape": {
+          "gizmo": {
+            "id": "str",
+            "organization_id": "str",
+            "short_url": "str",
+            "author": {
+              "user_id": "str",
+              "user_email": "str",
+              "display_name": "str",
+              "link_to": "NoneType",
+              "is_verified": "bool",
+              "selected_display": "str",
+              "will_receive_support_emails": "bool",
+              "display_socials": {
+                "type": "list",
+                "length": 0,
+                "item": null
+              }
+            },
+            "voice": {
+              "id": "str"
+            },
+            "workspace_id": "NoneType",
+            "model": "NoneType",
+            "default_model": "NoneType",
+            "instructions": "str",
+            "display": {
+              "name": "str",
+              "description": "str",
+              "prompt_starters": {
+                "type": "list",
+                "length": 0,
+                "item": null
+              },
+              "profile_pic_id": "NoneType",
+              "profile_picture_url": "NoneType",
+              "categories": {
+                "type": "list",
+                "length": 0,
+                "item": null
+              },
+              "emoji": "NoneType",
+              "theme": "NoneType"
+            },
+            "share_recipient": "str",
+            "created_at": "str",
+            "updated_at": "str",
+            "last_interacted_at": "str",
+            "num_interactions": "int",
+            "tags": {
+              "type": "list",
+              "length": 1,
+              "item": "str"
+            },
+            "is_unassigned": "bool",
+            "version": "int",
+            "version_author": "NoneType",
+            "version_created_at": "str",
+            "version_updated_at": "str",
+            "live_version": "int",
+            "training_disabled": "bool",
+            "sharing_targets": {
+              "type": "list",
+              "length": 2,
+              "item": {
+                "recipient": "str",
+                "allowed": "bool",
+                "moderated_fields": "NoneType"
+              }
+            },
+            "appeal_info": "NoneType",
+            "vanity_metrics": {
+              "num_conversations": "NoneType",
+              "num_conversations_str": "NoneType",
+              "created_ago_str": "NoneType",
+              "review_stats": "NoneType"
+            },
+            "workspace_approval_date": "NoneType",
+            "workspace_approved": "NoneType",
+            "sharing": {
+              "subjects": {
+                "type": "list",
+                "length": 0,
+                "item": null
+              },
+              "recipient": "str"
+            },
+            "current_user_permission": {
+              "can_delete": "bool",
+              "can_export": "bool",
+              "can_read": "bool",
+              "can_write": "bool",
+              "can_share": "bool",
+              "can_view_config": "bool"
+            },
+            "gizmo_type": "str",
+            "context_stuffing_budget": "int",
+            "use_injest_path": "bool",
+            "conversation_copy_in_progress": "bool",
+            "gizmo_snorlax_type": "NoneType",
+            "archived_at": "NoneType",
+            "is_archived": "bool",
+            "memory_enabled": "bool",
+            "memory_scope": "str",
+            "goal": "NoneType"
+          },
+          "tools": {
+            "type": "list",
+            "length": 0,
+            "item": null
+          },
+          "files": {
+            "type": "list",
+            "length": 0,
+            "item": null
+          },
+          "product_features": {
+            "attachments": {
+              "type": "str",
+              "accepted_mime_types": {
+                "type": "list",
+                "length": 82,
+                "item": "str"
+              },
+              "can_accept_all_mime_types": "bool",
+              "image_mime_types": {
+                "type": "list",
+                "length": 4,
+                "item": "str"
+              }
+            },
+            "contextual_answers": "NoneType"
+          },
+          "has_tpp_conversation": "bool",
+          "project_file_limits": "NoneType",
+          "project_connector_scope_limits": "NoneType"
+        },
+        "page_candidates": []
+      }
+    },
+    {
+      "request_id": "26776.370",
+      "path": "/backend-api/conversations",
+      "parameters": {
+        "is_archived": [
+          "false"
+        ],
+        "is_starred": [
+          "false"
+        ],
+        "limit": [
+          "28"
+        ],
+        "offset": [
+          "0"
+        ],
+        "order": [
+          "updated"
+        ]
+      },
+      "status": 200,
+      "body": {
+        "shape": {
+          "items": {
+            "type": "list",
+            "length": 28,
+            "item": {
+              "id": "str",
+              "title": "str",
+              "create_time": "str",
+              "update_time": "str",
+              "latest_assistant_turn_created_at": "NoneType",
+              "pinned_time": "NoneType",
+              "mapping": "NoneType",
+              "current_node": "NoneType",
+              "conversation_template_id": "str",
+              "gizmo_id": "str",
+              "is_archived": "bool",
+              "is_starred": "NoneType",
+              "is_temporary_chat": "bool",
+              "is_do_not_remember": "bool",
+              "memory_scope": "str",
+              "context_scopes": "NoneType",
+              "context_scopes_v2": {
+                "context_scopes": "list"
+              },
+              "workspace_id": "NoneType",
+              "async_status": "NoneType",
+              "safe_urls": {
+                "type": "list",
+                "length": 0,
+                "item": null
+              },
+              "blocked_urls": {
+                "type": "list",
+                "length": 0,
+                "item": null
+              },
+              "conversation_origin": "NoneType",
+              "trial_conversation_type": "NoneType",
+              "is_automation_conversation": "bool",
+              "snippet": "NoneType",
+              "summary_metadata": "NoneType",
+              "sugar_item_id": "NoneType",
+              "sugar_item_visible": "bool"
+            }
+          },
+          "total": "int",
+          "limit": "int",
+          "offset": "int"
+        },
+        "page_candidates": []
+      }
+    },
+    {
+      "request_id": "26776.372",
+      "path": "/backend-api/conversations",
+      "parameters": {
+        "hide_snorlax": [
+          "true"
+        ],
+        "is_archived": [
+          "false"
+        ],
+        "is_starred": [
+          "false"
+        ],
+        "limit": [
+          "28"
+        ],
+        "offset": [
+          "0"
+        ],
+        "order": [
+          "updated"
+        ]
+      },
+      "status": 200,
+      "body": {
+        "shape": {
+          "items": {
+            "type": "list",
+            "length": 28,
+            "item": {
+              "id": "str",
+              "title": "str",
+              "create_time": "str",
+              "update_time": "str",
+              "latest_assistant_turn_created_at": "NoneType",
+              "pinned_time": "NoneType",
+              "mapping": "NoneType",
+              "current_node": "NoneType",
+              "conversation_template_id": "NoneType",
+              "gizmo_id": "NoneType",
+              "is_archived": "bool",
+              "is_starred": "NoneType",
+              "is_temporary_chat": "bool",
+              "is_do_not_remember": "bool",
+              "memory_scope": "str",
+              "context_scopes": "NoneType",
+              "context_scopes_v2": {
+                "context_scopes": "list"
+              },
+              "workspace_id": "NoneType",
+              "async_status": "NoneType",
+              "safe_urls": {
+                "type": "list",
+                "length": 0,
+                "item": null
+              },
+              "blocked_urls": {
+                "type": "list",
+                "length": 0,
+                "item": null
+              },
+              "conversation_origin": "str",
+              "trial_conversation_type": "NoneType",
+              "is_automation_conversation": "bool",
+              "snippet": "NoneType",
+              "summary_metadata": "NoneType",
+              "sugar_item_id": "NoneType",
+              "sugar_item_visible": "bool"
+            }
+          },
+          "total": "int",
+          "limit": "int",
+          "offset": "int"
+        },
+        "page_candidates": []
+      }
+    },
+    {
+      "request_id": "26776.384",
+      "path": "/backend-api/gizmos/bootstrap",
+      "parameters": {
+        "limit": [
+          "2"
+        ]
+      },
+      "status": 200,
+      "body": {
+        "shape": {
+          "gizmos": {
+            "type": "list",
+            "length": 0,
+            "item": null
+          }
+        },
+        "page_candidates": []
+      }
+    },
+    {
+      "request_id": "26776.390",
+      "path": "/backend-api/gizmos/g-p-6a857675b2b08191bbb964c9ec5e4838/conversations",
+      "parameters": {
+        "cursor": [
+          "5feceb66ffc8"
+        ],
+        "limit": [
+          "5"
+        ],
+        "owned_only": [
+          "true"
+        ]
+      },
+      "status": 200,
+      "body": {
+        "shape": {
+          "items": {
+            "type": "list",
+            "length": 5,
+            "item": {
+              "id": "str",
+              "title": "str",
+              "create_time": "str",
+              "update_time": "str",
+              "latest_assistant_turn_created_at": "NoneType",
+              "pinned_time": "NoneType",
+              "mapping": "NoneType",
+              "current_node": "NoneType",
+              "conversation_template_id": "str",
+              "gizmo_id": "str",
+              "is_archived": "bool",
+              "is_starred": "NoneType",
+              "is_temporary_chat": "bool",
+              "is_do_not_remember": "bool",
+              "memory_scope": "str",
+              "context_scopes": "NoneType",
+              "context_scopes_v2": {
+                "context_scopes": "list"
+              },
+              "workspace_id": "NoneType",
+              "async_status": "NoneType",
+              "safe_urls": {
+                "type": "list",
+                "length": 0,
+                "item": null
+              },
+              "blocked_urls": {
+                "type": "list",
+                "length": 0,
+                "item": null
+              },
+              "conversation_origin": "NoneType",
+              "trial_conversation_type": "NoneType",
+              "is_automation_conversation": "bool",
+              "snippet": "str",
+              "summary_metadata": "NoneType",
+              "sugar_item_id": "NoneType",
+              "sugar_item_visible": "bool",
+              "owner": {
+                "user_id": "str",
+                "user_email": "str",
+                "name": "str",
+                "avatar_url": "str"
+              }
+            }
+          },
+          "cursor": "str"
+        },
+        "page_candidates": [
+          {
+            "pointer": "$",
+            "item_count": 5,
+            "membership": {
+              "current": 5
+            },
+            "next_cursor": "aab631981315",
+            "item_keys": [
+              "async_status",
+              "blocked_urls",
+              "context_scopes",
+              "context_scopes_v2",
+              "conversation_origin",
+              "conversation_template_id",
+              "create_time",
+              "current_node",
+              "gizmo_id",
+              "id",
+              "is_archived",
+              "is_automation_conversation",
+              "is_do_not_remember",
+              "is_starred",
+              "is_temporary_chat",
+              "latest_assistant_turn_created_at",
+              "mapping",
+              "memory_scope",
+              "owner",
+              "pinned_time",
+              "safe_urls",
+              "snippet",
+              "sugar_item_id",
+              "sugar_item_visible",
+              "summary_metadata",
+              "title",
+              "trial_conversation_type",
+              "update_time",
+              "workspace_id"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "request_id": "26776.393",
+      "path": "/backend-api/gizmos/g-p-6a857675b2b08191bbb964c9ec5e4838/conversations",
+      "parameters": {
+        "cursor": [
+          "5feceb66ffc8"
+        ]
+      },
+      "status": 200,
+      "body": {
+        "shape": {
+          "items": {
+            "type": "list",
+            "length": 10,
+            "item": {
+              "id": "str",
+              "title": "str",
+              "create_time": "str",
+              "update_time": "str",
+              "latest_assistant_turn_created_at": "NoneType",
+              "pinned_time": "NoneType",
+              "mapping": "NoneType",
+              "current_node": "NoneType",
+              "conversation_template_id": "str",
+              "gizmo_id": "str",
+              "is_archived": "bool",
+              "is_starred": "NoneType",
+              "is_temporary_chat": "bool",
+              "is_do_not_remember": "bool",
+              "memory_scope": "str",
+              "context_scopes": "NoneType",
+              "context_scopes_v2": {
+                "context_scopes": "list"
+              },
+              "workspace_id": "NoneType",
+              "async_status": "NoneType",
+              "safe_urls": {
+                "type": "list",
+                "length": 0,
+                "item": null
+              },
+              "blocked_urls": {
+                "type": "list",
+                "length": 0,
+                "item": null
+              },
+              "conversation_origin": "NoneType",
+              "trial_conversation_type": "NoneType",
+              "is_automation_conversation": "bool",
+              "snippet": "str",
+              "summary_metadata": "NoneType",
+              "sugar_item_id": "NoneType",
+              "sugar_item_visible": "bool",
+              "owner": {
+                "user_id": "str",
+                "user_email": "str",
+                "name": "str",
+                "avatar_url": "str"
+              }
+            }
+          },
+          "cursor": "str"
+        },
+        "page_candidates": [
+          {
+            "pointer": "$",
+            "item_count": 10,
+            "membership": {
+              "current": 10
+            },
+            "next_cursor": "052d4c04e824",
+            "item_keys": [
+              "async_status",
+              "blocked_urls",
+              "context_scopes",
+              "context_scopes_v2",
+              "conversation_origin",
+              "conversation_template_id",
+              "create_time",
+              "current_node",
+              "gizmo_id",
+              "id",
+              "is_archived",
+              "is_automation_conversation",
+              "is_do_not_remember",
+              "is_starred",
+              "is_temporary_chat",
+              "latest_assistant_turn_created_at",
+              "mapping",
+              "memory_scope",
+              "owner",
+              "pinned_time",
+              "safe_urls",
+              "snippet",
+              "sugar_item_id",
+              "sugar_item_visible",
+              "summary_metadata",
+              "title",
+              "trial_conversation_type",
+              "update_time",
+              "workspace_id"
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "error": null,
+  "page_origin": "chatgpt.com",
+  "page_path": "/g/g-p-6a857675b2b08191bbb964c9ec5e4838-gwajeyeongu1/project"
+}

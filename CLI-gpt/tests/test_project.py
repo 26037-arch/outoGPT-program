@@ -11,16 +11,19 @@ from cli_gpt.errors import (
 )
 from cli_gpt.project import (
     ProjectChat,
-    discover_project_chats,
-    read_conversation,
     _normalize_conversation_messages,
+    discover_project_chats,
+    extract_project_id,
+    project_chat_url,
+    read_conversation,
 )
 from test_pagination import CDP, history, node
 
-PROJECT = "https://chatgpt.com/g/g-p-project/project"
+PROJECT_ID = "g-p-0123456789abcdef0123456789abcdef"
+PROJECT = f"https://chatgpt.com/g/{PROJECT_ID}-named-project/project"
 CHAT = ProjectChat("chat", "https://chatgpt.com/g/g-p-project/c/chat", "Chat")
 INITIAL = "https://chatgpt.com/backend-api/conversation/chat"
-LIST = "https://chatgpt.com/backend-api/gizmos/g-p-project/conversations"
+LIST = f"https://chatgpt.com/backend-api/gizmos/{PROJECT_ID}/conversations"
 
 
 def dom(identifier, role="user", text="Question"):
@@ -85,6 +88,21 @@ def fetch(url, payload, **kwargs):
     return lambda cdp: cdp.fetch(url, payload, **kwargs)
 
 
+class ProjectIdTests(unittest.TestCase):
+    def test_named_project_url_returns_only_canonical_id(self):
+        self.assertEqual(extract_project_id(PROJECT), PROJECT_ID)
+
+    def test_noncanonical_project_id_is_rejected(self):
+        with self.assertRaisesRegex(Exception, "canonical project ID"):
+            extract_project_id("https://chatgpt.com/g/g-p-short-name/project")
+
+    def test_chat_url_uses_canonical_project_segment(self):
+        self.assertEqual(
+            project_chat_url(PROJECT, "conversation-id"),
+            f"https://chatgpt.com/g/{PROJECT_ID}/c/conversation-id",
+        )
+
+
 @patch("cli_gpt.project.project_access_error_visible", return_value=False)
 @patch("cli_gpt.project.login_or_challenge_visible", return_value=False)
 @patch("cli_gpt.project.generation_in_progress", return_value=False)
@@ -108,6 +126,21 @@ class ProjectDomTests(unittest.TestCase):
         self.assertEqual(result.qa_pairs[0].assistant, "Answer")
         self.assertGreaterEqual(p.tick, 5)
         self.assertTrue(p.cdp.detached)
+
+    def test_completion_observes_the_history_top_boundary(self, *_):
+        p = Page(
+            [[dom("u"), dom("a", "assistant", "Answer")]],
+            {
+                0: [
+                    fetch(
+                        INITIAL,
+                        history([node("u"), node("a", "u", "assistant", "Answer")]),
+                    )
+                ]
+            },
+        )
+        self.read(p)
+        self.assertGreaterEqual(p.scrolled, 1)
 
     def test_stable_dom_without_terminal_network_never_completes(self, *_):
         p = Page(
@@ -162,6 +195,204 @@ class ProjectDomTests(unittest.TestCase):
         self.assertEqual(result.non_ui_messages[0]["id"], "sys")
         self.assertEqual(len(result.qa_pairs), 1)
 
+    def test_internal_assistant_channel_is_preserved_as_non_ui(self, *_):
+        p = Page(
+            [[dom("u"), dom("a", "assistant", "Answer")]],
+            {
+                0: [
+                    fetch(
+                        INITIAL,
+                        history(
+                            [
+                                node("u"),
+                                node(
+                                    "thinking",
+                                    "u",
+                                    "assistant",
+                                    "private reasoning",
+                                    channel="analysis",
+                                ),
+                                node("a", "thinking", "assistant", "Answer"),
+                            ]
+                        ),
+                    )
+                ]
+            },
+        )
+        result = self.read(p)
+        self.assertEqual([message["id"] for message in result.messages], ["u", "a"])
+        self.assertEqual(result.non_ui_messages[0]["id"], "thinking")
+
+    def test_empty_model_editable_context_is_preserved_as_non_ui(self, *_):
+        for content in [
+            {"content_type": "model_editable_context", "parts": []},
+            {"content_type": "model_editable_context"},
+        ]:
+            context = node(
+                "context",
+                "u",
+                "assistant",
+                content=content,
+                recipient="all",
+            )
+            p = Page(
+                [[dom("u"), dom("a", "assistant", "Answer")]],
+                {
+                    0: [
+                        fetch(
+                            INITIAL,
+                            history(
+                                [
+                                    node("u"),
+                                    context,
+                                    node("a", "context", "assistant", "Answer"),
+                                ]
+                            ),
+                        )
+                    ]
+                },
+            )
+            result = self.read(p)
+            self.assertEqual(
+                [message["id"] for message in result.messages], ["u", "a"]
+            )
+            self.assertEqual(result.non_ui_messages[0]["id"], "context")
+
+    def test_nonempty_model_editable_context_is_not_silently_hidden(self, *_):
+        context = node(
+            "context",
+            "u",
+            "assistant",
+            content={"content_type": "model_editable_context", "parts": ["content"]},
+            recipient="all",
+        )
+        p = Page([[dom("u")]], {0: [fetch(INITIAL, history([node("u"), context]))]})
+        with self.assertRaises(ConversationHistoryIncomplete):
+            self.read(p)
+
+    def test_internal_tool_call_is_preserved_as_non_ui(self, *_):
+        tool_call = node(
+            "tool-call",
+            "u",
+            "assistant",
+            content={"content_type": "code", "text": "call()"},
+            recipient="api_tool.call_tool",
+            end_turn=False,
+        )
+        p = Page(
+            [[dom("u"), dom("a", "assistant", "Answer")]],
+            {
+                0: [
+                    fetch(
+                        INITIAL,
+                        history(
+                            [
+                                node("u"),
+                                tool_call,
+                                node("a", "tool-call", "assistant", "Answer"),
+                            ]
+                        ),
+                    )
+                ]
+            },
+        )
+        result = self.read(p)
+        self.assertEqual([message["id"] for message in result.messages], ["u", "a"])
+        self.assertEqual(result.non_ui_messages[0]["id"], "tool-call")
+
+    def test_internal_thoughts_are_preserved_as_non_ui(self, *_):
+        for content_type in ["thoughts", "reasoning_recap"]:
+            thoughts = node(
+                "thoughts",
+                "u",
+                "assistant",
+                content={"content_type": content_type, "thoughts": []},
+                recipient="all",
+                end_turn=False,
+            )
+            p = Page(
+                [[dom("u"), dom("a", "assistant", "Answer")]],
+                {
+                    0: [
+                        fetch(
+                            INITIAL,
+                            history(
+                                [
+                                    node("u"),
+                                    thoughts,
+                                    node("a", "thoughts", "assistant", "Answer"),
+                                ]
+                            ),
+                        )
+                    ]
+                },
+            )
+            result = self.read(p)
+            self.assertEqual(
+                [message["id"] for message in result.messages], ["u", "a"]
+            )
+            self.assertEqual(result.non_ui_messages[0]["id"], "thoughts")
+
+    def test_historical_unfinished_internal_step_is_preserved_but_latest_is_blocked(
+        self, *_
+    ):
+        for end_turn in [False, None]:
+            internal = node(
+                "internal",
+                "u",
+                "assistant",
+                status="in_progress",
+                recipient="python",
+                end_turn=end_turn,
+                content={"content_type": "code", "text": "call()"},
+            )
+            p = Page(
+                [[dom("u"), dom("a", "assistant", "Answer")]],
+                {
+                    0: [
+                        fetch(
+                            INITIAL,
+                            history(
+                                [
+                                    node("u"),
+                                    internal,
+                                    node("a", "internal", "assistant", "Answer"),
+                                ]
+                            ),
+                        )
+                    ]
+                },
+            )
+            self.assertEqual(self.read(p).non_ui_messages[0]["id"], "internal")
+
+            p = Page(
+                [[dom("u")]], {0: [fetch(INITIAL, history([node("u"), internal]))]}
+            )
+            with self.assertRaises(ConversationHistoryIncomplete):
+                self.read(p)
+
+    def test_empty_user_placeholder_is_preserved_as_non_ui(self, *_):
+        placeholder = node("placeholder", role="user", text="")
+        p = Page(
+            [[dom("u"), dom("a", "assistant", "Answer")]],
+            {
+                0: [
+                    fetch(
+                        INITIAL,
+                        history(
+                            [
+                                placeholder,
+                                node("u", "placeholder"),
+                                node("a", "u", "assistant", "Answer"),
+                            ]
+                        ),
+                    )
+                ]
+            },
+        )
+        result = self.read(p)
+        self.assertEqual(result.non_ui_messages[0]["id"], "placeholder")
+
     def test_missing_message_and_same_count_wrong_content_block_completion(self, *_):
         for sample in [[dom("u")], [dom("u"), dom("a", "assistant", "Wrong")]]:
             p = Page(
@@ -177,6 +408,46 @@ class ProjectDomTests(unittest.TestCase):
             )
             with self.assertRaises(ConversationHistoryIncomplete):
                 self.read(p)
+
+    def test_collapsed_long_dom_segment_uses_complete_network_markdown(self, *_):
+        source = " ".join(f"token{index:03d}" for index in range(50))
+        rendered = " ".join(f"token{index:03d}" for index in range(43))
+        p = Page(
+            [[dom("u"), dom("a", "assistant", rendered)]],
+            {
+                0: [
+                    fetch(
+                        INITIAL,
+                        history(
+                            [node("u"), node("a", "u", "assistant", source)]
+                        ),
+                    )
+                ]
+            },
+        )
+        result = self.read(p)
+        self.assertEqual(result.messages[-1]["markdown"], source)
+        self.assertEqual(result.qa_pairs[0].assistant, source)
+
+    def test_long_dom_segment_with_substantial_wrong_content_is_rejected(self, *_):
+        source = " ".join(f"source{index:03d}" for index in range(80))
+        rendered = " ".join(f"source{index:03d}" for index in range(50))
+        rendered += " " + " ".join(f"wrong{index:03d}" for index in range(20))
+        p = Page(
+            [[dom("u"), dom("a", "assistant", rendered)]],
+            {
+                0: [
+                    fetch(
+                        INITIAL,
+                        history(
+                            [node("u"), node("a", "u", "assistant", source)]
+                        ),
+                    )
+                ]
+            },
+        )
+        with self.assertRaises(ConversationHistoryIncomplete):
+            self.read(p)
 
     def test_delayed_content_hydration_uses_latest_uuid_value(self, *_):
         p = Page(
@@ -256,13 +527,24 @@ class ProjectDomTests(unittest.TestCase):
             events={
                 0: [
                     fetch(
-                        LIST, {"items": [{"id": "a", "title": "A"}], "cursor": "page2"}
+                        LIST + "?cursor=0",
+                        {
+                            "items": [
+                                {"id": "a", "title": "A", "gizmo_id": PROJECT_ID}
+                            ],
+                            "cursor": "page2",
+                        },
                     )
                 ],
                 5: [
                     fetch(
                         LIST + "?cursor=page2",
-                        {"items": [{"id": "b", "title": "B"}], "cursor": None},
+                        {
+                            "items": [
+                                {"id": "b", "title": "B", "gizmo_id": PROJECT_ID}
+                            ],
+                            "cursor": None,
+                        },
                         rid="p2",
                     )
                 ],
@@ -271,6 +553,10 @@ class ProjectDomTests(unittest.TestCase):
         result = discover_project_chats(p, PROJECT, max_rounds=12, poll_ms=0)
         self.assertTrue(result.complete)
         self.assertEqual([c.chat_id for c in result.chats], ["a", "b"])
+        self.assertEqual(
+            result.chats[0].chat_url,
+            f"https://chatgpt.com/g/{PROJECT_ID}/c/a",
+        )
         self.assertGreaterEqual(p.tick, 7)
 
     def test_project_missing_network_is_partial_even_if_ui_says_empty(self, *_):
@@ -354,3 +640,33 @@ class ProjectDomTests(unittest.TestCase):
         )
         with self.assertRaises(ConversationHistoryIncomplete):
             self.read(p)
+
+    def test_attachment_only_user_merged_into_assistant_turn_uses_turn_uuid(self, *_):
+        attachment_user = node(
+            "u",
+            text="",
+            metadata={"attachments": [{"id": "file-1", "name": "report.pdf"}]},
+        )
+        assistant_dom = {
+            **dom("a", "assistant", "Answer"),
+            "turnKey": "u",
+        }
+        p = Page(
+            [[assistant_dom]],
+            {
+                0: [
+                    fetch(
+                        INITIAL,
+                        history(
+                            [
+                                attachment_user,
+                                node("a", "u", "assistant", "Answer"),
+                            ]
+                        ),
+                    )
+                ]
+            },
+        )
+        result = self.read(p)
+        self.assertEqual([message["id"] for message in result.messages], ["u", "a"])
+        self.assertEqual(result.qa_pairs[0].user, "[Attachment: report.pdf]")

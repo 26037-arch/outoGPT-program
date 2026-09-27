@@ -62,11 +62,14 @@ class SelectorTests(unittest.TestCase):
         self.assertIn(
             'article[data-testid^="conversation-turn"]', CONVERSATION_TURNS
         )
+        self.assertIn("[data-turn-key]", CONVERSATION_TURNS)
         self.assertEqual(
             set(MESSAGE_ROLE_NODES),
             {
                 '[data-message-author-role="user"]',
                 '[data-message-author-role="assistant"]',
+                "[data-user-message-bubble]",
+                "[data-chatgpt-selection-message-id]",
             },
         )
 

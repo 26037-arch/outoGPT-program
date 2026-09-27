@@ -1,0 +1,30 @@
+{
+  "kind": "other-chat-archive-validation",
+  "ok": true,
+  "target_index": 1,
+  "project_chat_count": 25,
+  "target_chat_id_sha256": "4bf58c43ac4cfbb69a02d29865c833acf7bc64e0f551588354be37d4f354e4cf",
+  "qa_pairs": 7,
+  "visible_messages": 14,
+  "hidden_messages": 448,
+  "markdown_bytes": 3933534,
+  "markdown_sha256": "5f8be0d19a64d773b7ad9ef31165fa7bbbfa87b877e626cb6d58d3468251bc0d",
+  "markdown_readback_sha256": "5f8be0d19a64d773b7ad9ef31165fa7bbbfa87b877e626cb6d58d3468251bc0d",
+  "network_pages": 2,
+  "network_terminal_chain_verified": true,
+  "completion_round": 76,
+  "completion_pages": null,
+  "completion_pending": 0,
+  "completion_verification_wait": null,
+  "scroll": {
+    "found": true,
+    "containerKind": "ancestor",
+    "before": -53487,
+    "after": -53875,
+    "reverse": true,
+    "wasAtTop": false,
+    "atTop": true,
+    "scrollHeight": 54820,
+    "clientHeight": 945
+  }
+}
