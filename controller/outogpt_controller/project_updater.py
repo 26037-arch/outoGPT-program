@@ -351,7 +351,19 @@ class ProjectUpdater:
                             location=_error_location(exc),
                         )
                 if error is not None:
-                    raise error
+                    if isinstance(error, ConversationLoadingUnknown):
+                        raise error
+                    result.failed_chats += 1
+                    result.add_error(
+                        error,
+                        chat_id=chat.chat_id,
+                        chat_url=chat.chat_url,
+                        stage="extraction",
+                    )
+                    progress["pending_chat_id"] = None
+                    result.pending_chat_id = None
+                    archive.save_progress(progress)
+                    continue
                 progress["stage"] = "persistence"
                 archive.save_progress(progress)
                 known = archive.state.chats.get(chat.chat_id)

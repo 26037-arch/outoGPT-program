@@ -407,7 +407,7 @@ class ProjectUpdaterTests(unittest.TestCase):
         self.assertEqual(result.errors[0]["code"], "PAGE_STRUCTURE_CHANGED")
         self.assertEqual(state_path.read_bytes(), original)
 
-    def test_extraction_error_retries_same_chat_and_stops_remaining_chats(self):
+    def test_extraction_error_retries_then_skips_chat_and_continues(self):
         browser = FakeBrowser(
             {
                 "bad": PageStructureChanged("bad messages"),
@@ -416,14 +416,19 @@ class ProjectUpdaterTests(unittest.TestCase):
         )
         result = ProjectUpdater(browser, self.root).update(PROJECT_URL)
         state, directory = self.state()
-        self.assertTrue(result.paused)
-        self.assertEqual(browser.read_ids, ["bad", "bad", "bad"])
-        self.assertEqual(result.saved_chats, 0)
-        self.assertEqual(state["chats"], {})
+        self.assertFalse(result.ok)
+        self.assertFalse(result.paused)
+        self.assertEqual(browser.read_ids, ["bad", "bad", "bad", "good"])
+        self.assertEqual(result.failed_chats, 1)
+        self.assertEqual(result.saved_chats, 1)
+        self.assertEqual(result.errors[0]["chat_id"], "bad")
+        self.assertEqual(result.errors[0]["stage"], "extraction")
+        self.assertEqual(set(state["chats"]), {"good"})
         progress = json.loads(
             (directory / "update-progress.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(progress["pending_chat_id"], "bad")
+        self.assertEqual(progress["status"], "complete")
+        self.assertIsNone(progress["pending_chat_id"])
 
     def test_unicode_code_blocks_and_multiline_answers_survive(self):
         snapshot = ConversationSnapshot(
